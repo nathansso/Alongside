@@ -18,7 +18,7 @@ import re;
 import os;
 import from byllm.lib { MockLLM }
 import from graph { Anchor, Member, Utterance, Observation, Belief, Constraint, Verdict, Concern,
-                     DerivedFrom, About, Governs }
+                     DerivedFrom, About, Governs, Examined, Conflicts }
 
 # ===== VOCABULARY — Issue #2 =====
 #
@@ -853,6 +853,168 @@ def wr_rank_conflict_candidates(pairs: list[dict], budget: int) -> dict {
         "examined_count": len(examine),
         "queued_count": len(queue),
     };
+}
+
+# Two Beliefs are a candidate pair if they're About the same Anchor. O(n^2) over the graph's
+# Beliefs, per ARCHITECTURE.md §4 — that's what the budget in wr_rank_conflict_candidates exists
+# to make affordable.
+def wr_share_anchor(a: Belief, b: Belief) -> bool {
+    a_anchors: list[Anchor] = [a ->:About:->][?:Anchor];
+    b_anchors: list[Anchor] = [b ->:About:->][?:Anchor];
+    for x in a_anchors {
+        for y in b_anchors {
+            if x.key == y.key {
+                return True;
+            }
+        }
+    }
+    return False;
+}
+
+# Examined is undirected in effect — check both directions, since two independent Consolidate
+# runs could write the edge from either side of a pair.
+def wr_already_examined(a: Belief, b: Belief) -> bool {
+    forward: list[Belief] = [a ->:Examined:->][?:Belief];
+    for x in forward {
+        if jid(x) == jid(b) {
+            return True;
+        }
+    }
+    backward: list[Belief] = [b ->:Examined:->][?:Belief];
+    for x in backward {
+        if jid(x) == jid(a) {
+            return True;
+        }
+    }
+    return False;
+}
+
+# Builds the candidate-pair descriptors wr_rank_conflict_candidates ranks and slices. jid strings
+# travel in the dict rather than node references so the dict stays the same plain-data shape the
+# ranking function already expects and was tested against.
+def wr_find_candidate_pairs(at_root: Root) -> list[dict] {
+    beliefs: list[Belief] = [at_root -->][?:Belief];
+    pairs: list[dict] = [];
+    n: int = len(beliefs);
+    for i in range(n) {
+        for j in range(n) {
+            if j > i {
+                bi: Belief = beliefs[i];
+                bj: Belief = beliefs[j];
+                if wr_share_anchor(bi, bj) {
+                    pairs.append({
+                        "a_jid": jid(bi),
+                        "b_jid": jid(bj),
+                        "shared_anchor": True,
+                        "reinforced_this_turn": False,
+                        "last_examined": wr_already_examined(bi, bj),
+                    });
+                }
+            }
+        }
+    }
+    return pairs;
+}
+
+# Most recent Utterance.at in the graph — Consolidate's pinned signature (CONTRACTS.md §4) has
+# no `at` field of its own, unlike Remember, so Examined.at / Conflicts.derived_at need a
+# deterministic date from graph state rather than an unparameterized "now". Flagged as a
+# CONTRACTS §4 gap worth a contract amendment, same class as the CaseFile.onset default (#29) —
+# not resolved unilaterally, just handled the cheapest way that doesn't invent a clock.
+def wr_latest_utterance_at(at_root: Root) -> str {
+    utts: list[Utterance] = [at_root -->][?:Utterance];
+    latest: str = "";
+    for u in utts {
+        if u.at > latest {
+            latest = u.at;
+        }
+    }
+    return latest;
+}
+
+# jobj() returns Any, which the +>:Edge:+> operator refuses as an endpoint (E1096/E1097 —
+# "must be a node instance"). A typed re-scan is the fix: find the Belief by jid directly, which
+# keeps its real type instead of erasing it through Any.
+def wr_find_belief_by_jid(at_root: Root, target_jid: str) -> Belief | None {
+    beliefs: list[Belief] = [at_root -->][?:Belief];
+    for b in beliefs {
+        if jid(b) == target_jid {
+            return b;
+        }
+    }
+    return None;
+}
+
+# MockLLM-first, same reasoning as wr_extract's glob above — no live provider key exists yet
+# (Nathan's #27). A second, independently-bound model so this site's fixture queue never
+# interferes with Remember's.
+glob llm2 = MockLLM(
+    model_name="mockllm-satisfiability",
+    config={"outputs": [SatisfiabilityResult(jointly_satisfiable=True, because="")]}
+);
+
+def wr_check_satisfiability(claim_a: str, claim_b: str) -> SatisfiabilityResult by llm2();
+sem wr_check_satisfiability = "Decide whether two natural-language patient/clinician statements can both be true at once. If they conflict, explain why in one sentence.";
+sem wr_check_satisfiability.claim_a = "The first statement.";
+sem wr_check_satisfiability.claim_b = "The second statement.";
+
+# DEMO_MODE fixtures for by llm() site #2 — hand-built for the pairs the seed corpus can
+# actually produce. Anything else falls through to jointly_satisfiable=True (the honest default:
+# no evidence of a conflict is not evidence of no conflict, but Conflicts is additive and
+# corroboration-only, so an unmatched pair simply isn't flagged rather than being guessed at).
+def wr_demo_satisfiability(claim_a: str, claim_b: str) -> SatisfiabilityResult {
+    return SatisfiabilityResult(jointly_satisfiable=True, because="");
+}
+
+walker:pub Consolidate {
+    has budget: int = 6;
+    has out: Verdict = Verdict();
+
+    can go with Root entry {
+        at_now: str = wr_latest_utterance_at(here);
+        candidates: list[dict] = wr_find_candidate_pairs(here);
+        ranked: dict = wr_rank_conflict_candidates(candidates, self.budget);
+        examine: list[dict] = list(ranked["examine"]);
+
+        for pair in examine {
+            a_jid: str = str(pair["a_jid"]);
+            b_jid: str = str(pair["b_jid"]);
+            a_belief: Belief | None = wr_find_belief_by_jid(here, a_jid);
+            b_belief: Belief | None = wr_find_belief_by_jid(here, b_jid);
+            if a_belief is None {
+                continue;
+            }
+            if b_belief is None {
+                continue;
+            }
+            a_node: Belief = a_belief;
+            b_node: Belief = b_belief;
+
+            claim_a: str = a_node.claim;
+            claim_b: str = b_node.claim;
+
+            result: SatisfiabilityResult = SatisfiabilityResult();
+            if os.getenv("DEMO_MODE") {
+                result = wr_demo_satisfiability(claim_a, claim_b);
+            } else {
+                result = wr_check_satisfiability(claim_a, claim_b);
+            }
+
+            # A6/#6: mark Examined regardless of outcome — this IS the persistence that stops a
+            # satisfiable pair being re-examined forever, per the schema note above. Additive
+            # only; nothing is ever deleted.
+            a_node +>:Examined(at=at_now, conflicting=not result.jointly_satisfiable):+> b_node;
+
+            if not result.jointly_satisfiable {
+                a_node +>:Conflicts(derived_at=at_now):+> b_node;
+                self.out.conflicts.append(claim_a + " vs " + claim_b + ": " + result.because);
+            }
+        }
+    }
+
+    can done with Root exit {
+        report self.out;               # one typed object, once, from Root exit (CONTRACTS §4)
+    }
 }
 # ===== END CONSOLIDATE =====
 
