@@ -100,6 +100,14 @@ def pg_kind_for(m: PageModel, rid: str) -> str {
     return "";
 }
 
+# True once any section carries a row. Prepare (#18) currently reads derived concerns from a stub
+# (pg_derived_concerns -> []), so a live spawn returns a shape-valid but EMPTY PageModel until the
+# Recall->Prepare handoff is wired. Treat empty as "not ready yet" and keep the fixture, so the demo
+# never blanks (stub-first, CONTRACTS §7). Once real concerns flow, the result is non-empty and wins.
+def pg_nonempty(m: PageModel) -> bool {
+    return (len(m.escalate) + len(m.ask) + len(m.mention) + len(m.log)) > 0;
+}
+
 # ---- fixtures (dev / HMR path; superseded by root spawn when walkers exist) -----------------------
 
 def pg_stub_model -> PageModel {
@@ -477,7 +485,8 @@ def:pub ConcernsPage() -> JsxElement {   # jac:ignore[W3005]
             # wrong) once Prepare lands in main.jac. The payload is re-asserted `as PageModel`.
             res: any = (root spawn Prepare(include_log=True)) as any;   # jac:ignore[W1051, W2001, W1037]
             if res and res.reports {   # truthy list; avoids len(<any>) -> Sized E1053
-                m = res.reports[0] as PageModel;
+                pm2 = res.reports[0] as PageModel;
+                if pg_nonempty(pm2) { m = pm2; }   # else keep the fixture (Prepare has no concerns yet)
             }
         } except Exception as e {
             console.log("[page] Prepare unavailable — rendering fixture:", e);   # jac:ignore[W2001, W6002]
@@ -490,7 +499,8 @@ def:pub ConcernsPage() -> JsxElement {   # jac:ignore[W3005]
         try {
             res: any = (root spawn Prepare(include_log=True)) as any;   # jac:ignore[W1051, W2001, W1037]
             if res and res.reports {   # truthy list; avoids len(<any>) -> Sized E1053
-                model = res.reports[0] as PageModel;
+                pm2 = res.reports[0] as PageModel;
+                model = pm2 if pg_nonempty(pm2) else pg_stub_model();   # keep fixture until concerns flow
             }
         } except Exception as e {
             console.log("[page] Prepare refresh unavailable:", e);   # jac:ignore[W2001, W6002]
