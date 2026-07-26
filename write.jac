@@ -452,9 +452,44 @@ with entry {
 // by llm() judgment.
 // ===== END REMEMBER =====
 
-// ===== CONSOLIDATE walker — Issue #6, by llm() site #2. Not started. Blocked by #1, #5. =====
+// ===== CONSOLIDATE walker — Issue #6, by llm() site #2 =====
 // walker Consolidate { has budget: int = 6; has out: Verdict = Verdict(); }
 // Self-budgeted Conflicts derivation; persistent queue across turns; never deletes a node.
+//
+// The walker body itself is blocked by #1 (needs `Belief`/`Conflicts` from graph.jac) and #5
+// (needs real `Belief` pairs to rank). The self-budgeting *algorithm* — "plans its own work",
+// the strongest autonomy story in the system (ARCHITECTURE.md §4) — has no graph dependency and
+// is split out here so it's ready to call once the walker can supply real candidate pairs.
+//
+// Rank: shared Anchor > reinforced this turn > cold (ARCHITECTURE.md §4). A pair carrying a
+// `last_examined` marker is skipped entirely — that's what makes next turn examine a different
+// slice instead of the same `budget` pairs every time.
+
+def:pub wr_conflict_tier(pair: dict) -> int {
+    if pair.get("shared_anchor", False) {
+        return 0;
+    }
+    if pair.get("reinforced_this_turn", False) {
+        return 1;
+    }
+    return 2;
+}
+
+// `pairs`: candidate Belief-pair descriptors — {"id": str, "shared_anchor": bool,
+// "reinforced_this_turn": bool, "last_examined": str | None}. The walker builds this list from
+// the graph; this function only ranks and slices it.
+def:pub wr_rank_conflict_candidates(pairs: list[dict], budget: int) -> dict {
+    eligible: list[dict] = [p for p in pairs if not p.get("last_examined")];
+    ranked: list[dict] = sorted(eligible, key=wr_conflict_tier);
+    examine: list[dict] = ranked[:budget];
+    queue: list[dict] = ranked[budget:];
+    return {
+        "examine": examine,
+        "queue": queue,
+        "examined_count": len(examine),
+        "queued_count": len(queue),
+    };
+}
 // ===== END CONSOLIDATE =====
 
 // ===== DEMO_MODE — Issue #25, not started. Blocked by #7. =====
