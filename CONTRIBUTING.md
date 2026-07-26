@@ -194,15 +194,21 @@ unless your change actually resolves them too.
 
 ### `schema` — touching a node or edge in `graph.jac`
 
-The file corrupts every persisted graph when it changes. So:
+A schema change costs every collaborator a **re-seed**. So:
 
 1. It is frozen after #1; only a `schema` issue reopens it.
 2. Batch schema changes — don't merge three in a row.
 3. On merge, comment in the team channel: **"schema changed, reset your graph."**
-4. Everyone pulls, then clears their persisted graph (locally `rm -rf .jac/data/`; on jachammer,
-   whatever the equivalent turns out to be — **find this before stage 1**).
+4. Everyone pulls, then clears their persisted graph: `jac clean --force`, or delete
+   `.jac/data/<project>.db`. On jachammer, delete that one file in the file tree — no shell needed.
+   Then re-run the seed. **The reset path is settled (#30); see `CLAUDE.md`.**
 
-Symptom of a missed reset: `NodeAnchor ... is not a valid reference!`
+**It is not as violent as this file used to claim.** Archetype edits do *not* produce
+`NodeAnchor ... is not a valid reference!` on Jac 0.16.7 — adding, removing or retyping a field, and
+changing an edge, all get a best-effort load, and a renamed archetype is quarantined while the app
+keeps running. **But it is silent data loss**: whatever no longer maps is dropped without an error.
+That is exactly why the freeze and this announce-on-merge rule still stand — the cost is a wasted
+hour of confusion, not a crash that tells you something went wrong.
 
 ### `contract` — changing a pinned shape
 
