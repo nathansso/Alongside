@@ -13,20 +13,29 @@ breaks at runtime, not at `jac check`.
 
 ## 1. Ownership
 
+**Three people, three tracks.** T1 Bryan · T2 Nathan · T3 Laksh.
+
 | Area | Files | Owner |
 |---|---|---|
-| Graph schema — **persisted** | `graph/archetypes.jac` (nodes + edges) | **T1, frozen after stage 1** |
+| Graph schema — **persisted** | `graph/archetypes.jac` (nodes + edges) | **T1 — frozen after stage 1** |
 | Vocabulary + ingest | `graph/vocab.jac`, `ingest/regimen.jac` | T1 |
 | Write path | `walkers/remember.jac`, `walkers/consolidate.jac` | T1 |
 | Seed graph + fixtures | `seed/patient.jac` | T1 |
-| Read path | `walkers/recall.jac`, `walkers/investigate.jac` | T2 |
+| `DEMO_MODE` branches | both `by llm()` sites | T1 |
+| Read path | `walkers/recall.jac`, `walkers/investigate.jac`, `walkers/vigil.jac` | T2 |
 | Eval | `eval/*` | T2 |
-| Report objects — **transient** | `graph/reports.jac` (objs) | T3; **not frozen**, `contract` label to change |
-| Page UI | `components/*.cl.jac` | T3 |
+| Platform + deploy | jachammer project, env vars, remote, deploys | T2 |
+| **Spine** | **`main.jac`, `jac.toml`** | **T3 — single owner. Nobody else opens these files.** |
+| `Prepare` | `walkers/prepare.jac` | T3 |
 | Templates | `render/templates.jac` | T3 |
-| **Spine** | **`main.jac`, `jac.toml`** | **T4 — single owner. Nobody else opens these files.** |
-| Page walkers | `walkers/prepare.jac`, `walkers/vigil.jac` | T4 |
-| Platform + deploy | jachammer project, env vars, `DEMO_MODE` | T4 |
+| Page UI | `components/*.cl.jac` + paired `*.style.css` | T3 |
+| Report objects — **transient** | `graph/reports.jac` (objs) | T3; **not frozen**, `contract` label to change |
+
+**Why the work sits where it does.** `DEMO_MODE` is T1's because both `by llm()` sites it branches
+are T1's files. The platform chores are T2's because it is Nathan's jachammer account, and because
+T2 is the only track with a free first hour — everything in it waits on #1. T3 owns the surface top
+to bottom, from `Prepare` through the rendered row, which is what makes single ownership of
+`main.jac` workable.
 
 **Two files are single-owner, for different reasons.** `graph/archetypes.jac` because editing it
 corrupts everyone's persisted graph. `main.jac` because it is the one file every track would
@@ -48,9 +57,9 @@ label plus an ack, because three tracks build against them.
 
 ---
 
-## 1a. `main.jac` — how four people share one file
+## 1a. `main.jac` — how three people share one file
 
-**They don't. One person owns it for the entire build. The other three never open it.**
+**They don't. T3 owns it for the entire build. T1 and T2 never open it.**
 
 `main.jac` is the mixed-context entry point: server archetypes and walkers at top level, the browser
 UI in a `cl { }` block. It is the file that carries the single-file claim, which means every track
@@ -61,9 +70,9 @@ in the repo. So it is governed like archetypes, not like a shared workspace.
 
 **Contributions arrive as modules, not as edits.**
 
-Your code lives in a file you own — `walkers/recall.jac`, `components/ConcernRow.cl.jac`,
-`render/templates.jac`. When it needs to be reachable from the spine, you **comment on #17 with the
-exact line to add**, and T4 adds it. You do not push a commit that touches `main.jac`. Ever.
+Your code lives in a file you own — `walkers/recall.jac`, `graph/vocab.jac`,
+`walkers/consolidate.jac`. When it needs to be reachable from the spine, you **comment on #17 with
+the exact line to add**, and T3 adds it. You do not push a commit that touches `main.jac`. Ever.
 
 ```
 # comment on #17
@@ -89,13 +98,13 @@ git tag -a single-file-slice -m "Full vertical slice: graph, walkers, and UI in 
 git push origin single-file-slice
 ```
 
-**Phase 2 — everything after.** As real modules land, T4 replaces inline bodies with `include`
+**Phase 2 — everything after.** As real modules land, T3 replaces inline bodies with `include`
 lines. `main.jac` stays the entry point and stays under ~80 lines.
 
 The tag is what makes both claims true at judging time. *"The entire app was one file"* is
 demonstrable at a commit hash. *"The entry point is still one mixed-context file, server and client
 together, no separate frontend and no separate Python service"* is true of `main`. Neither claim
-needs four people editing one file, which is the thing that was never going to work.
+needs three people editing one file, which is the thing that was never going to work.
 
 ### If you find yourself wanting to edit `main.jac`
 

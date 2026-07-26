@@ -153,7 +153,7 @@ The deployment target is a browser IDE. Confirmed from its docs, see `ARCHITECTU
 jachammer runs `jac install` on a `jac.toml` change is not documented anywhere in its platform docs.
 Not a risk worth taking for styling.
 
-### `.style.css` annexes — the default, and why they suit four people
+### `.style.css` annexes — the default, and why they suit three people
 
 A CSS file with the **same base name** as a component is auto-scoped to that module. No import — the
 compiler pairs them, hashes each declared class, and rewrites the matching `className` literals.
@@ -186,7 +186,7 @@ over — which is the whole reason this is the default rather than a compromise.
   service, no separate React app.
 - **Zero non-Jac artifacts.** The vocabulary and curated interaction table are inline `glob`s, not
   JSON files — jachammer has no filesystem.
-- **`main.jac` is the spine, owned by T4 alone. Do not edit it** — see `CONTRACTS.md` §1a. In #17 it
+- **`main.jac` is the spine, owned by T3 (Laksh) alone. Do not edit it** — see `CONTRACTS.md` §1a. In #17 it
   is the literal single-file vertical slice (inline archetypes + `Remember` + `Prepare` + the page
   UI), and that commit is tagged `single-file-slice`. After that it shrinks to `include` lines plus
   the `cl { }` entry. Contributions reach it as modules; you comment the `include` line on #17.
@@ -203,7 +203,7 @@ over — which is the whole reason this is the default rather than a compromise.
 - **Check `CONTRACTS.md` before changing any shared shape**, and follow the announcement rule there
   if you must.
 - **Two files are single-owner. Do not edit either on a feature branch.** `graph/archetypes.jac`
-  (frozen after stage 1 — open a `schema` issue) and `main.jac` (T4's — comment the `include` line
+  (frozen after stage 1 — open a `schema` issue) and `main.jac` (T3's — comment the `include` line
   you need on #17).
 - Do not start a new task while a prior one has a failing acceptance check.
 - Surface the open decisions in `ARCHITECTURE.md` section 18 rather than resolving them.
