@@ -15,14 +15,22 @@ breaks at runtime, not at `jac check`.
 
 | Area | Files | Owner |
 |---|---|---|
-| Graph schema — **persisted** | `graph/archetypes.jac` (nodes + edges) | **one person, frozen after stage 1** |
-| Report objects — **transient** | `graph/reports.jac` (objs) | Track 3 leads; **not frozen**, `contract` label to change |
-| Vocabulary | `graph/vocab.jac`, `ingest/regimen.jac` | Track A |
-| Read path | `walkers/recall.jac`, `walkers/investigate.jac` | Track B |
-| Write path | `walkers/remember.jac`, `walkers/consolidate.jac` | Track C |
-| Surface | `walkers/prepare.jac`, `render/templates.jac`, `components/*.cl.jac` | Track D |
-| Demo + eval | `seed/patient.jac`, `eval/*`, `DEMO_MODE` branches | Track E |
-| Vertical slice | `main.jac` | **Track D owns it; append only within your own section** |
+| Graph schema — **persisted** | `graph/archetypes.jac` (nodes + edges) | **T1, frozen after stage 1** |
+| Vocabulary + ingest | `graph/vocab.jac`, `ingest/regimen.jac` | T1 |
+| Write path | `walkers/remember.jac`, `walkers/consolidate.jac` | T1 |
+| Seed graph + fixtures | `seed/patient.jac` | T1 |
+| Read path | `walkers/recall.jac`, `walkers/investigate.jac` | T2 |
+| Eval | `eval/*` | T2 |
+| Report objects — **transient** | `graph/reports.jac` (objs) | T3; **not frozen**, `contract` label to change |
+| Page UI | `components/*.cl.jac` | T3 |
+| Templates | `render/templates.jac` | T3 |
+| **Spine** | **`main.jac`, `jac.toml`** | **T4 — single owner. Nobody else opens these files.** |
+| Page walkers | `walkers/prepare.jac`, `walkers/vigil.jac` | T4 |
+| Platform + deploy | jachammer project, env vars, `DEMO_MODE` | T4 |
+
+**Two files are single-owner, for different reasons.** `graph/archetypes.jac` because editing it
+corrupts everyone's persisted graph. `main.jac` because it is the one file every track would
+otherwise need to touch — see section 1a.
 
 **The freeze covers persisted archetypes only, and that distinction is load-bearing.**
 
@@ -37,6 +45,61 @@ Track 3 may iterate on them as the page teaches us what `Row` actually needs —
 
 Not frozen is not unowned. Report objs are still pinned below, and changing one needs the `contract`
 label plus an ack, because three tracks build against them.
+
+---
+
+## 1a. `main.jac` — how four people share one file
+
+**They don't. One person owns it for the entire build. The other three never open it.**
+
+`main.jac` is the mixed-context entry point: server archetypes and walkers at top level, the browser
+UI in a `cl { }` block. It is the file that carries the single-file claim, which means every track
+has a reason to want to edit it, which means it is the single most likely source of merge conflicts
+in the repo. So it is governed like archetypes, not like a shared workspace.
+
+### The protocol
+
+**Contributions arrive as modules, not as edits.**
+
+Your code lives in a file you own — `walkers/recall.jac`, `components/ConcernRow.cl.jac`,
+`render/templates.jac`. When it needs to be reachable from the spine, you **comment on #17 with the
+exact line to add**, and T4 adds it. You do not push a commit that touches `main.jac`. Ever.
+
+```
+# comment on #17
+walkers/recall.jac is on main as of #8. Add:
+    include walkers.recall;
+```
+
+That reduces the shared surface of `main.jac` to a single alphabetically-ordered `include` list. Two
+people adding a line at once is a one-line textual conflict with no semantics in it — trivial to
+resolve, and it cannot break the build in a way that `jac check .` won't catch immediately.
+
+### The two phases, and why the single-file claim survives
+
+**Phase 1 — #17. `main.jac` is literally the whole app.** Inline archetypes, inline `Remember`,
+inline `Prepare`, inline `cl { }` page. Around 150 lines. One author, one sitting, no coordination
+cost because nothing else exists yet. This is the real vertical slice: check-in → graph write →
+traversal → rendered page, all in one file, one language.
+
+**Tag that commit.**
+
+```
+git tag -a single-file-slice -m "Full vertical slice: graph, walkers, and UI in one file"
+git push origin single-file-slice
+```
+
+**Phase 2 — everything after.** As real modules land, T4 replaces inline bodies with `include`
+lines. `main.jac` stays the entry point and stays under ~80 lines.
+
+The tag is what makes both claims true at judging time. *"The entire app was one file"* is
+demonstrable at a commit hash. *"The entry point is still one mixed-context file, server and client
+together, no separate frontend and no separate Python service"* is true of `main`. Neither claim
+needs four people editing one file, which is the thing that was never going to work.
+
+### If you find yourself wanting to edit `main.jac`
+
+That is the signal your work belongs in a module. Move it into one and comment on #17.
 
 ---
 

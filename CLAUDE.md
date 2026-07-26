@@ -105,7 +105,7 @@ stale line — a conventional type-checker sees nothing across that seam.
 
 - **Editing archetypes corrupts the persisted graph.** Changing a node or edge definition between
   runs gives `NodeAnchor ... is not a valid reference!`. Locally the reflex is `rm -rf .jac/data/`.
-  **On jachammer there is no shell.** The reset path is being established in issue #27 — check that
+  **On jachammer there is no shell.** The reset path is being established in issue #30 — check that
   issue for the answer, and if it is still open, do not start schema work.
 - **Edge abilities are a silent no-op.** `can ... with Walker entry` inside an `edge` compiles clean
   and never fires. All scoring lives in walker node abilities reading `[edge ...]`.
@@ -134,8 +134,51 @@ The deployment target is a browser IDE. Confirmed from its docs, see `ARCHITECTU
 - **Sandbox deploys expire after 7 days.** The submission link must be a permanent deploy (#28).
 - **No `jac browse`.** UI verification is manual in the preview pane. Do not write acceptance checks
   that assume a headless driver.
-- **Assume npm installs are unavailable** until #27 says otherwise. Inline CSS, no Tailwind or
-  shadcn.
+### Styling — resolved, do not wait on #30
+
+**We never need a network package install.** The decision is a 10-second check in the editor:
+
+**Open `jac.toml`. Does it have a `[jac-shadcn]` section?**
+
+- **Yes** → Tailwind and shadcn are already wired by the template. Use them. Import primitives from
+  `components/ui/`, use `cn()` from `lib/utils.cl.jac`, and use semantic tokens
+  (`text-muted-foreground`, `bg-card`, `border`) rather than hardcoded grays. `jac add --shadcn
+  <name>` is **bundled and offline** — no network — so pulling in a missing primitive should work
+  even if npm installs don't. Never hand-write a primitive that exists in `components/ui/`.
+- **No** → **use `.style.css` annex files.** Zero dependencies, no build plugin, no `jac install`.
+
+**Do not add Tailwind to a non-shadcn project here.** That path needs
+`jac add --npm --dev tailwindcss @tailwindcss/vite` plus a `[plugins.client.vite]` block, and
+**editing `[dependencies.npm]` installs nothing on its own — `jac install` must run after.** Whether
+jachammer runs `jac install` on a `jac.toml` change is not documented anywhere in its platform docs.
+Not a risk worth taking for styling.
+
+### `.style.css` annexes — the default, and why they suit four people
+
+A CSS file with the **same base name** as a component is auto-scoped to that module. No import — the
+compiler pairs them, hashes each declared class, and rewrites the matching `className` literals.
+
+```jac
+# components/ConcernRow.cl.jac
+def:pub ConcernRow(row: Row) -> JsxElement {
+    return <div className="row"><h3 className="row-q">{row.question}</h3></div>;
+}
+```
+```css
+/* components/ConcernRow.style.css — paired by base name; do NOT import it */
+.row { padding: 1rem; border: 1px solid #ddd; }
+.row-q { font-weight: 600; }
+:global(body) { margin: 0; }   /* :global() opts out of scoping */
+```
+
+`className="row"` compiles to `row-1419142b`, so **two people can both declare `.row` and never
+collide.** Each component is one owner, two files, and there is no shared global stylesheet to fight
+over — which is the whole reason this is the default rather than a compromise.
+
+- Base name must match **exactly**: `ConcernRow.cl.jac` ↔ `ConcernRow.style.css`.
+- Undeclared class tokens pass through untouched, so scoped and utility classes can mix.
+- Plain-CSS projects **may** use a `*` reset. Tailwind projects may not — it collapses spacing
+  utilities by conflicting with Preflight.
 
 ## Conventions
 
@@ -143,9 +186,12 @@ The deployment target is a browser IDE. Confirmed from its docs, see `ARCHITECTU
   service, no separate React app.
 - **Zero non-Jac artifacts.** The vocabulary and curated interaction table are inline `glob`s, not
   JSON files — jachammer has no filesystem.
-- **`main.jac` is the single-file vertical slice**: archetypes + `Remember` + `Prepare` + the page
-  UI in one file. This is deliberate and demonstrates a scored rubric property. Do not refactor the
-  UI out of it. Other components live in `components/*.cl.jac`.
+- **`main.jac` is the spine, owned by T4 alone. Do not edit it** — see `CONTRACTS.md` §1a. In #17 it
+  is the literal single-file vertical slice (inline archetypes + `Remember` + `Prepare` + the page
+  UI), and that commit is tagged `single-file-slice`. After that it shrinks to `include` lines plus
+  the `cl { }` entry. Contributions reach it as modules; you comment the `include` line on #17.
+- **Never refactor the `cl { }` block out of `main.jac`.** Server and client in one mixed-context
+  entry file is a scored rubric property. Sub-components live in `components/*.cl.jac`.
 - **`walkers/recall.jac` contains no `while` loop.** Policy lives on node-type abilities.
 - **No scheduler, cron, or background sweep.** `Vigil` on app open is the trigger.
 - **Never cut `Prepare` or the concerns page.** It is the deliverable. Drop order is `Shortcut`,
@@ -156,8 +202,9 @@ The deployment target is a browser IDE. Confirmed from its docs, see `ARCHITECTU
 - Work from an issue. Branch, PR, and label conventions are in `CONTRIBUTING.md`.
 - **Check `CONTRACTS.md` before changing any shared shape**, and follow the announcement rule there
   if you must.
-- **`graph/archetypes.jac` is owned and frozen after stage 1.** Do not edit it on a feature branch —
-  open a `schema` issue.
+- **Two files are single-owner. Do not edit either on a feature branch.** `graph/archetypes.jac`
+  (frozen after stage 1 — open a `schema` issue) and `main.jac` (T4's — comment the `include` line
+  you need on #17).
 - Do not start a new task while a prior one has a failing acceptance check.
 - Surface the open decisions in `ARCHITECTURE.md` section 18 rather than resolving them.
 - When reporting, state: which issue, which acceptance check passed, and any invariant currently
