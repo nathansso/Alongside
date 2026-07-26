@@ -650,6 +650,54 @@ def wr_extract(text: str) -> ExtractionResult by llm();
 sem wr_extract = "Extract a typed belief and, if present, a symptom observation from the patient's free-text check-in. Identify any medication or supplement name mentioned verbatim, even if unfamiliar, as ExtractedBelief.substance.";
 sem wr_extract.text = "The patient's raw check-in sentence.";
 
+# DEMO_MODE fixtures (#25) — keyed on exact Utterance.text (CONTRACTS.md §6), hand-built for the
+# SEED_CHECKINS corpus. An if/elif chain rather than a dict[str, ExtractionResult] glob: explicit
+# over clever, and it keeps every fixture next to the exact string it keys on for easy review.
+# Anything outside SEED_CHECKINS falls through to an empty ExtractionResult — no observation, no
+# beliefs — which is the honest "nothing extracted" answer, not a guess.
+def wr_demo_extract(text: str) -> ExtractionResult {
+    if text == "Take Gleevec at the same time every day, and call the clinic immediately if your temperature goes over 100.4." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="preference", claim="on Gleevec", substance="Gleevec", polarity=0.0)]);
+    }
+    if text == "Take Zofran within 30 minutes before food if the nausea is bad." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="preference", claim="on Zofran", substance="Zofran", polarity=0.0)]);
+    }
+    if text == "Also take docusate daily for constipation prevention." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="preference", claim="on docusate", substance="docusate", polarity=0.0)]);
+    }
+    if text == "Started the new medication today, feeling okay so far." {
+        return ExtractionResult();
+    }
+    if text == "Some nausea after breakfast, took the Zofran like they said." {
+        return ExtractionResult(
+            observation=ExtractedObservation(present=True, metric="nausea", value=1.0),
+            beliefs=[ExtractedBelief(kind="preference", claim="took Zofran", substance="Zofran", polarity=0.0)]
+        );
+    }
+    if text == "Nausea again this morning, not too bad." {
+        return ExtractionResult(observation=ExtractedObservation(present=True, metric="nausea", value=0.5));
+    }
+    if text == "Feeling okay, no complaints today." {
+        return ExtractionResult();
+    }
+    if text == "Went to urgent care for a sinus infection and started Levaquin." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="constraint", claim="started Levaquin for a sinus infection", substance="Levaquin", polarity=0.0)]);
+    }
+    if text == "Some loose stools the last couple days, not sure why." {
+        return ExtractionResult(observation=ExtractedObservation(present=True, metric="diarrhea", value=1.0));
+    }
+    if text == "Skipped my Gleevec refill this week, it's expensive and I couldn't get to the pharmacy in time." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="constraint", claim="skipped Gleevec refill due to cost", substance="Gleevec", polarity=0.0)]);
+    }
+    if text == "Still feeling tired but otherwise okay." {
+        return ExtractionResult();
+    }
+    if text == "Finished the antibiotic course, sinus infection cleared up." {
+        return ExtractionResult();
+    }
+    return ExtractionResult();
+}
+
 walker:pub Remember {
     has text: str;
     has role: str;
@@ -659,7 +707,21 @@ walker:pub Remember {
     can go with Root entry {
         utt = (here ++> Utterance(text=self.text, at=self.at, role=self.role))[0];
 
-        extraction: ExtractionResult = wr_extract(self.text);
+        # Deterministic instruction parsing runs regardless of by llm() extraction — threshold
+        # evaluation must never depend on a model (ARCHITECTURE.md §8's "seven places that must
+        # not have one"). A miss here is silent: most check-ins carry no instruction at all.
+        wr_write_instruction(here, utt, self.text);
+
+        # DEMO_MODE read INSIDE the ability, never as a module-level glob — jachammer globs
+        # evaluate once at boot and would miss a later change (Nathan's #27 finding, flagged for
+        # this file by name). No live provider key exists yet either way (#27), so this is the
+        # only path that runs right now regardless of the flag.
+        extraction: ExtractionResult = ExtractionResult();
+        if os.getenv("DEMO_MODE") {
+            extraction = wr_demo_extract(self.text);
+        } else {
+            extraction = wr_extract(self.text);
+        }
 
         if extraction.observation.present {
             obs = (here ++> Observation(
