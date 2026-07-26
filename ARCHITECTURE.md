@@ -537,25 +537,46 @@ B guarantee. This refusal is deliberate and belongs in the writeup — it is not
 
 Target is a **full-stack Jac web app** running in jachammer, Jaseci Labs' browser-based Jac IDE.
 
-### Confirmed from the jachammer docs
+**The platform is `jachammer.ai`.** `jachammer.com` is an unrelated parked domain.
+**Our project:** `https://jachammer.ai/project/db1341cc-5649-47d0-b5fb-15f8c00213ca`
+
+### Verified on the live project (#27, #30)
+
+Everything in this table was checked in the running IDE, not read from docs.
 
 | Capability | Finding | Consequence for us |
 |---|---|---|
-| **Git** | Every project is a **real git repository** from creation — branches, commits, diffs, **remotes, push/pull**. JacCoder and a human work against the same repo and history. | **The GitHub workflow in `CONTRIBUTING.md` is fully compatible.** Add `origin` in the Git panel and the three-track parallel model works as written. This was the biggest risk to the collaboration plan and it is resolved. |
-| **Environment variables** | Two scopes, project and global. Sourced into the app's own running process for both preview and deploys. Project-level overrides global. | **`DEMO_MODE` has a clean home.** No shell needed, no config file. Set it per-project. |
-| **Deploys** | **Sandbox**: temporary, expires after **7 days**, free on every plan. **Permanent**: no expiry, gets a subdomain, supports a custom domain. Pro allows **15 sandbox + 3 permanent**. | Demo off a sandbox deploy, but **ship the submission link as a permanent deploy** — a sandbox URL dies a week after judging, taking the portfolio link with it. |
-| **Eject** | Projects are git-backed and ejectable to standalone code. Nothing is hidden or locked away. | No lock-in risk. The repo remains the source of truth. |
-| **Client UI** | Building and deploying web apps served at a subdomain is the core product use case. | The `cl { }` layer is available. The concerns page is buildable. |
+| **Git** | Real git repo, `origin` wired to our GitHub repo, branches and remotes in the Source Control panel. **Full round trip verified in both directions** — a GitHub merge appears in the IDE's history, and an IDE commit (`33f3484`, which created `jac.toml`) reached `origin/main`. | **The `CONTRIBUTING.md` workflow works as written.** This was the biggest risk to the collaboration plan; it is resolved. |
+| **GitHub auth is a separate step** | Adding the remote URL is *not* enough. Push needs an OAuth grant via **Connect GitHub** in the Sync panel. Before it, the panel shows a remote and still cannot push. | A half-wired remote looks identical to a working one until someone tries to push. Check for the account link, not just the remote. |
+| **Environment variables** | **Project scope only** — the panel offers `PROJECT · Environment` and `USER · AI Keys`, and no global scope. Values are stored **encrypted**. Sourced into the process **at start**: saving prints *"STOP and START the preview for the changes to take effect."* | **`DEMO_MODE` has a clean home** and cannot leak across projects. **Never read it into a `glob`** — globs evaluate once at boot. Read it inside the ability, per `CONTRACTS.md` §6. |
+| **Deploys** | **Sandbox**: free, 7-day TTL, shareable, available on the current plan. **Permanent** ("Production"): a public URL with scaling, and it is **gated behind a paid upgrade**. | The account is on **FREE**, not Pro. See the correction below. |
+| **Client UI** | `cl { }` is available and the preview pane serves it. | The concerns page is buildable. |
+
+**Correction to a load-bearing assumption.** This section previously stated "Pro allows 15 sandbox + 3
+permanent". **The account is on the FREE plan** and Production reads *"Upgrade to deploy"* — there are
+zero permanent deploys available today. The upgrade is now a hard prerequisite in #28 rather than a
+background assumption.
+
+**Correction on model access.** `USER · AI Keys` reports *"No provider keys saved."* Platform credits
+appear to cover the JacHammer build assistant, **not `by llm()` calls from our running app**. Until a
+provider key exists as a project env var, `DEMO_MODE` is not a convenience — it is the only way the
+demo runs.
+
+### Resolved since this section was written
+
+| Was unresolved | Answer |
+|---|---|
+| **Graph reset with no shell** | **Three paths, all verified — see `CLAUDE.md`.** `jac clean --force`; or delete the single SQLite file `.jac/data/<project>.db` (no shell needed); or an in-app reset walker. **And it matters less than assumed:** archetype edits do *not* produce `NodeAnchor ... is not a valid reference!` on Jac 0.16.7 — field add/remove/retype and edge changes get a best-effort load, and a renamed archetype is quarantined while the app keeps running. A schema change costs a **re-seed**, not a recovery. |
+| **npm deps / styling** | The live `jac.toml` has **no `[jac-shadcn]`** → the plain-CSS path is confirmed for #20. It also has **no `[serve]`, no `kind`, and no `[dependencies.npm]`**, which is a problem of its own: on a config like that the Vite dev server fails to start and **nothing is served**. See #17. |
+| **Preview reload behavior** | **HMR is real** on `.cl.jac` files; server modules need a full restart. **Open decision 2 in §18 resolves in favour of keeping `page.cl.jac` split out** until the final merge. |
 
 ### Still unresolved
 
 | Constraint | Effect |
 |---|---|
-| **Graph reset with no shell** | The `rm -rf .jac/data/` recovery reflex has no documented equivalent, and archetype edits corrupt the persisted graph. **Find the reset path before stage 1** — this is now the top remaining build risk. Checkpoints and version history may cover it; confirm. |
+| **Typed report objs across the `cl { }` seam** | `root spawn` reaches the walker and the server returns 200, but the browser client cannot hydrate the typed report obj. Declaring the obj beside the `cl { }` block emits the class twice and breaks the build; declaring it in a separate module leaves the client with nothing to hydrate into. **`spike/` is a live reproducer.** This is the top remaining build risk, and it also threatens the single-file merge in `CONTRACTS.md` §1a. |
 | **No filesystem** | The vocabulary must be an inline `glob` in Jac. `data/*.json` cannot exist. A requirement, not a preference — and it leaves the repo with **zero non-Jac artifacts**. |
-| **No local CLI** | `jac browse` (headless QA driver) is unavailable. UI verification is manual in the preview pane. Budget for it. |
-| **npm deps uncertain** | Tailwind / shadcn need package installs. Assume inline CSS until proven otherwise — which also makes the single-file claim cleaner. |
-| **Preview reload behavior** | If the preview does a full rebuild regardless, the HMR advantage of keeping UI in `.cl.jac` files evaporates and the case for collapsing more into `main.jac` gets stronger. Decide after the first preview run. |
+| **No local CLI** | `jac browse` is unavailable *inside jachammer*; UI verification there is manual in the preview pane. It does work against a local `jac start`, which is where acceptance checks should run. |
 
 No scheduler, cron, or background sweep is available or needed. `Vigil` on app open is the trigger.
 
@@ -668,9 +689,11 @@ Read before writing any Jac. Fuller treatment in `CLAUDE.md`.
 
 - **Edge abilities are a silent no-op.** `can ... with Walker entry` inside an `edge` compiles
   clean and never fires. All scoring lives in walker node abilities reading `[edge ...]`.
-- **Editing archetypes corrupts the persisted graph.** Changing a node or edge definition between
-  runs gives `NodeAnchor ... is not a valid reference!`. Locally: `rm -rf .jac/data/`. **On
-  jachammer, find the equivalent before stage 1.**
+- **Editing archetypes costs a re-seed, not a recovery** (measured in #30 on Jac 0.16.7). Field
+  add/remove/retype and edge changes get a `schema drift ... best-effort load`; a renamed archetype
+  is quarantined and the app keeps running. **It is silent data loss, not a crash.** Reset with
+  `jac clean --force`, or delete the one file `.jac/data/<project>.db` — which is the jachammer
+  path, since it needs no shell. Three routes in `CLAUDE.md`.
 - **`++>` returns a list.** `b = (anchor ++> Belief(claim=c))[0];`. A missing `[0]` fails somewhere
   else entirely.
 - **Typed edge deletion needs `[edge ...]` plus iterate-`del`.** `del [a ->:Supersedes:-> b];`

@@ -190,29 +190,53 @@ jachammer before relying on it.
 
 ## Using jachammer
 
-The deployment target is a browser IDE. Confirmed from its docs, see `ARCHITECTURE.md` section 9:
+The platform is **`jachammer.ai`** — `jachammer.com` is an unrelated parked domain.
+Our project: `https://jachammer.ai/project/db1341cc-5649-47d0-b5fb-15f8c00213ca`
 
-- **Every project is a real git repository** — branches, commits, remotes, push/pull. You and
-  JacCoder work against the same history. Work against the GitHub remote, not a separate copy.
-- **Config goes in environment variables**, project or global scope, sourced into the app's running
-  process for preview and deploys. `DEMO_MODE` is a **project-scoped** variable. There is no shell,
-  so there is nowhere else to put it.
-- **Sandbox deploys expire after 7 days.** The submission link must be a permanent deploy (#28).
-- **No `jac browse`.** UI verification is manual in the preview pane. Do not write acceptance checks
-  that assume a headless driver.
-### Styling — resolved, do not wait on #30
+Verified on the live project in #27, not read from docs. Fuller table in `ARCHITECTURE.md` §9:
 
-**We never need a network package install.** The decision is a 10-second check in the editor:
+- **Every project is a real git repository**, and the **round trip is confirmed both ways** — a
+  GitHub merge shows up in the IDE's history, and an IDE commit reaches `origin/main`. Work against
+  the GitHub remote, not a separate copy.
+- **Adding the remote is not the same as being able to push.** Push needs an OAuth grant via
+  **Connect GitHub** in the Sync panel. Until then the panel lists a remote and still cannot push —
+  a half-wired remote is indistinguishable from a working one until someone tries.
+- **Environment variables are project-scoped only** (there is no global scope in the UI) and stored
+  encrypted. `DEMO_MODE` lives there. **They are sourced at process start** — saving says
+  *"STOP and START the preview for the changes to take effect."* So **never read `DEMO_MODE` into a
+  `glob`**; globs evaluate once at boot. Read it inside the ability.
+- **The account is on the FREE plan.** Sandbox deploys are free with a 7-day TTL. **Permanent
+  ("Production") deploys are gated behind a paid upgrade** — that upgrade is a prerequisite for #28,
+  not an assumption.
+- **No provider API key is saved.** Platform credits appear to cover the build assistant, not
+  `by llm()` from the running app. Until a key exists as a project env var, `DEMO_MODE` is the only
+  way the demo runs.
+- **No `jac browse` inside jachammer.** UI verification there is manual in the preview pane. It does
+  work against a local `jac start`, which is where acceptance checks should run.
 
-**Open `jac.toml`. Does it have a `[jac-shadcn]` section?**
+### Styling — answered. Plain CSS.
 
-- **Yes** → Tailwind and shadcn are already wired by the template. Use them. Import primitives from
-  `components/ui/`, use `cn()` from `lib/utils.cl.jac`, and use semantic tokens
-  (`text-muted-foreground`, `bg-card`, `border`) rather than hardcoded grays. `jac add --shadcn
-  <name>` is **bundled and offline** — no network — so pulling in a missing primitive should work
-  even if npm installs don't. Never hand-write a primitive that exists in `components/ui/`.
-- **No** → **one `styles/global.css`**, imported once inside `main.jac`'s `cl { }` block. Zero
-  dependencies, no build plugin, no `jac install`.
+The rule was "open `jac.toml`, does it have a `[jac-shadcn]` section?" **It does not.** Here is the
+live file in full, read off the project in #27:
+
+```toml
+[project]
+name = "myCancerPal"
+version = "0.1.0"
+
+[jacpack]
+name = 'myCancerPal'
+description = 'Jac IDE snapshot for myCancerPal'
+```
+
+So: **one `styles/global.css`**, hand-prefixed class names, imported once inside `main.jac`'s
+`cl { }` block. Zero dependencies, no build plugin, no `jac install`. No Tailwind, no shadcn.
+
+**But note what else is missing from that file** — no `[serve]`, no `kind`, and no
+`[dependencies.npm]`. On a `jac.toml` like this the Vite dev server fails to start
+(`Cannot find package 'vite'`) and **nothing is served at all** — the API answers and the page does
+not exist. That is #17's problem, not a styling problem, but it means "the styling decision is
+settled" and "the client builds" are two different facts.
 
 **Do not add Tailwind to a non-shadcn project here.** That path needs
 `jac add --npm --dev tailwindcss @tailwindcss/vite` plus a `[plugins.client.vite]` block, and
