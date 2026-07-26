@@ -15,6 +15,7 @@
 # Section order mirrors the merge order in CONTRACTS.md §1a: globs -> write walkers.
 
 import re;
+import from graph { Anchor, Member }
 
 # ===== VOCABULARY — Issue #2 =====
 #
@@ -115,6 +116,35 @@ glob VOCAB_MEMBERS: list[dict] = [
 
 with entry {
     print("vocab: " + str(len(VOCAB_ANCHORS)) + " anchors, " + str(len(VOCAB_MEMBERS)) + " member edges");
+}
+
+# Wires VOCAB_ANCHORS/VOCAB_MEMBERS into real, persisted Anchor nodes and Member edges under
+# at_root. A1 in code: this is the only place an Anchor is ever constructed in the whole app.
+# Idempotency is the caller's job — call this once per graph (e.g. from Vigil's first-run check
+# in read.jac), not on every turn; calling it twice duplicates every anchor.
+def wr_seed_vocabulary(at_root: Root) -> dict {
+    created: dict[str, Anchor] = {};
+    for a in VOCAB_ANCHORS {
+        key: str = str(a["key"]);
+        kind: str = str(a["kind"]);
+        n = (at_root ++> Anchor(key=key, kind=kind))[0];
+        created[key] = n;
+    }
+
+    member_count: int = 0;
+    for m in VOCAB_MEMBERS {
+        frm_key: str = str(m["frm"]);
+        to_key: str = str(m["to"]);
+        via: str = str(m["via"]);
+        if frm_key in created {
+            if to_key in created {
+                created[frm_key] +>:Member(via=via):+> created[to_key];
+                member_count = member_count + 1;
+            }
+        }
+    }
+
+    return {"anchor_count": len(created), "member_count": member_count};
 }
 # ===== END VOCABULARY =====
 
