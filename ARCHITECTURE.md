@@ -14,9 +14,9 @@ the disagreement should be reported to a human.
 
 A **longitudinal treatment companion** for cancer patients and caregivers.
 
-The patient checks in daily about how they feel and what they took. A persistent Jac graph
-accumulates those check-ins as typed beliefs linked to deterministically-parsed anchors. Two
-things run off that graph:
+The patient checks in daily — **typed, or spoken aloud** — about how they feel and what they took. A
+persistent Jac graph accumulates those check-ins as typed beliefs linked to deterministically-parsed
+anchors. Two things run off that graph:
 
 1. **An interaction gate.** Before any new substance enters the regimen, a mandatory graph
    traversal runs. If a hard constraint is violated, the action is blocked.
@@ -223,6 +223,9 @@ and opening the app is not a request.
 ### `Remember` — write
 
 - **Trigger:** patient check-in submitted.
+- **Input:** the check-in text comes from the check-in surface (§5) — **typed, or optionally dictated
+  via the browser Web Speech API.** `Remember` receives a `str`; speech-to-text is a browser API,
+  **not** a `by llm()` site (§8).
 - **Writes:** `Utterance` (always), `Observation` (if a symptom value is present), `Belief` nodes
   from extraction, `DerivedFrom` and `About` edges.
 - **LLM calls:** `by llm()` #1 — free-text patient language into a typed schema.
@@ -324,6 +327,30 @@ Five consequences, all load-bearing:
 4. **The patient page and the judge-facing traversal inspector are the same artifact** with a
    toggle.
 5. `Prepare` goes from the first thing we would cut to the deliverable.
+
+### The check-in surface — typing, with a voice option
+
+Getting data *in* is where this product lives or dies. Every detection in section 7 — absence,
+trajectory, the day-9 convergence — depends on the patient checking in **daily**, and the patient is
+fatigued, nauseated, cognitively foggy, and sometimes has neuropathy that makes typing painful.
+Lowering the cost of a check-in is therefore load-bearing, not cosmetic: it is the difference between
+a graph that accumulates and one that goes silent — which is the exact failure the `silence` class in
+section 7 exists to catch.
+
+So the daily check-in **defaults to typing, with a one-tap voice option** for the days typing is the
+barrier: a mic toggle, a live interim transcript, and on the final result the verbatim text is handed
+to `Remember(text=…, role="patient", at=today)` — the same path a typed check-in takes.
+
+- **No new `by llm()` site.** Transcription is the browser Web Speech API (§8). `Remember` sees only
+  the resulting `str`; extraction (`by llm()` #1) is unchanged.
+- **`role` is set by the flow, never by voice.** The daily check-in is `role="patient"`. The
+  loop-closure "record what your team said" box (below) is the only place a clinical role is set, and
+  that is an explicit, separate action — a spoken word never earns an authority role by itself.
+- **Verbatim capture strengthens provenance.** The patient's own words become the `Utterance` quoted
+  back under "Where this came from," so voice makes S2/S8 *better*, not weaker.
+- **Lives in `page.cl.jac`, collapses into `main.jac`.** No separate component file and no
+  `.style.css` annex (`CONTRACTS.md` §1a); the Web Speech API is reached through browser interop with
+  no npm dependency. Interop mechanics are in `CLAUDE.md`.
 
 ### Row anatomy
 
@@ -494,6 +521,10 @@ calls" — the distinction will be checked.
 | emergency bypass | parsed flag, evaluated before anything else runs |
 | **page copy** | **template-or-quote per S8. This is the one an agent will try to "improve".** |
 
+**Note — speech-to-text is not an eighth site.** The voice check-in (§5) transcribes audio to a `str`
+with the browser Web Speech API, a platform capability, not a model call. It is outside this census
+and does not count against the two-site cap.
+
 ### Jaseci primitive usage
 
 Used: Extract (×2), Spawn, Pipe, Loop.
@@ -536,13 +567,13 @@ No scheduler, cron, or background sweep is available or needed. `Vigil` on app o
 `CONTRACTS.md` sections 1 and 1a — read that before writing a line.
 
 ```
-graph.jac       Bryan    nodes, edges, report objs. Nodes/edges FROZEN after #1.
+graph.jac       Laksh    nodes, edges, report objs. Nodes/edges FROZEN after #1.
 write.jac       Bryan    Remember (by llm() #1), Consolidate (by llm() #2),
                          vocabulary glob, regimen parse, seed patient, DEMO_MODE
 read.jac        Nathan   Recall (channel A + B, detection, corroboration), Vigil,
                          Investigate, eval harness, QUARANTINED cosine baseline
 main.jac        Laksh    Prepare, template registry, imports, cl { } mounting the page
-page.cl.jac     Laksh    concerns page, rows, activity panel, check-in, inspector
+page.cl.jac     Laksh    concerns page, rows, activity panel, typed/voice check-in, inspector
 jac.toml        Laksh    [serve] base_route_app = "app"
 styles/global.css Laksh  the one stylesheet. No .style.css annexes — see CONTRACTS §1a.
 ```
@@ -691,7 +722,7 @@ traversal, node, or edge before beat 5.
 |---|---|---|
 | 1 | Regimen parse: the patient's medication list becomes structure | 25s |
 | 2 | `Vigil` speaks first. Open the app to log nausea; the page already raises an adherence gap, unprompted | 20s |
-| 3 | The sinus-infection check-in. Split pane: similarity search finds nothing, traversal reaches the shared toxicity from two directions | 75s |
+| 3 | The sinus-infection check-in (typed by default; the voice toggle shown in passing). Split pane: similarity search finds nothing, traversal reaches the shared toxicity from two directions | 75s |
 | 4 | Expand the row: `Investigate` case file, provenance click-through to source sentences | 30s |
 | 5 | `main.jac` on screen. One file: the graph, the walkers, the AI, the UI. Primitive census, refusal of Route | 30s |
 
@@ -718,6 +749,13 @@ concerns page needs no branch — it never calls a model.
 
 Acceptance: with the flag set and the network disconnected, the full demo spine runs end to end,
 and output is byte-identical across three consecutive runs.
+
+**Voice + `DEMO_MODE`.** The demo types the check-in by default — reliable on stage and offline. The
+voice toggle is optional and needs connectivity (browser STT is a network call), so do **not** use it
+during the offline byte-identical acceptance run. If you do demo voice live, the mic fills an
+**editable** field; keep it editable so a mis-transcription can be corrected before submit —
+`DEMO_MODE` keys fixtures on the exact canonical `Utterance.text`, so the submitted string must
+match.
 
 ### Activity panel
 
@@ -804,6 +842,12 @@ State these; do not hide them.
   caveat.
 - **Contradiction handling is one edge type, not a temporal model.** Proper bitemporal invalidation
   is a research problem; `Supersedes` is the cheap correct-looking version.
+- **Voice sends audio off-device.** The browser Web Speech API transcribes via a third-party service
+  (e.g. Google for Chrome). This is an accepted prototype tradeoff, not a clinician-outbound path, so
+  S7 still holds; a production build would move to on-device transcription. State it; do not hide it.
+- **Speech recognition is browser-dependent.** Web Speech API is supported in Chromium and Safari,
+  not Firefox, and needs connectivity. The check-in surface must fall back to typing when it is
+  unavailable.
 
 ---
 

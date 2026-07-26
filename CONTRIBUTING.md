@@ -25,18 +25,19 @@ Everything else in this file is detail. These four do the work:
 
 ## 1. Tracks
 
-Three people, three tracks.
+Three people. **Five files, split 3 / 1 / 1** — Laksh three, Bryan and Nathan one each.
 
 | Track | Owner | Label | Owns | Issues |
 |---|---|---|---|---|
-| **T1 — Graph & Write** | **Bryan** | `track:graph-write` | **`write.jac`** — `Remember`, `Consolidate`, vocab `glob`, regimen parse, seed patient, `DEMO_MODE` | 8 |
+| **T1 — Write path** | **Bryan** | `track:graph-write` | **`write.jac`** — `Remember`, `Consolidate`, vocab `glob`, regimen parse, seed patient, `DEMO_MODE` | 6 |
 | **T2 — Traversal & Eval** | **Nathan** | `track:traversal-eval` | **`read.jac`** — `Recall`, `Vigil`, `Investigate`, eval, baseline; plus the jachammer project and deploys | 13 |
-| **T3 — Surface & Demo** | **Laksh** | `track:surface-demo` | **`main.jac`** (`Prepare`, templates, `cl { }`) + **`page.cl.jac`** (the page) + `jac.toml`, `styles/global.css` | 9 |
+| **T3 — Schema + Surface** | **Laksh** | `track:surface-demo` (+ `schema` for `graph.jac`) | **`graph.jac`** (nodes, edges, report objs; frozen after #1) + **`main.jac`** (`Prepare`, templates, `cl { }`) + **`page.cl.jac`** (the page + typed/voice check-in) + `jac.toml`, `styles/global.css` | 11 |
 
-**T3 is deliberately unblocked.** The concerns page is the deliverable and it can be built entirely
-against the `PageModel` contract before a single traversal is real. T3 also owns the surface top to
-bottom — `Prepare` through the rendered row — which is what makes sole ownership of `main.jac`
-workable rather than a bottleneck.
+**Laksh now owns the schema *and* the surface.** That front-loads #1 — define and freeze the nodes and
+edges — onto T3: it is the blocking first task, so Laksh does #1 first, then fans out to the surface,
+which can be built against the `PageModel` contract before a single traversal is real. Nathan, the
+heaviest schema consumer, reviews the #1 completeness checklist before it freezes (§1a). Sole
+ownership of `main.jac` stays workable because Laksh owns everything that merges into it.
 
 **T2's count is inflated by short chores.** Nine real traversal issues, plus `Vigil` and three
 platform items (#27, #28, #30) that are configuration rather than code. They sit with T2 because it
@@ -65,19 +66,22 @@ first, and why nobody should be deep in a branch while it is still open.
 
 ### In parallel with #30, from minute one
 
-- **Laksh → #29.** Report objs. Explicitly unblocked, does not wait on #1. Then #17.
+- **Laksh → #29.** Report objs (`graph.jac`, transient — not the node/edge freeze). Explicitly
+  unblocked, does not wait on the freeze.
 - **Bryan → #2.** The vocabulary glob is just anchor keys and `Member` pairs. Write the data now;
   wire the edges after #1 merges.
-- **Nathan → #1's completeness checklist, before Bryan starts it.** T2 is the heaviest consumer of
-  the schema and #1 freezes it. Thirty minutes spent reviewing it is cheaper than a mid-build
+- **Nathan → #1's completeness checklist, before Laksh starts it.** Nathan is the heaviest consumer
+  of the schema and #1 freezes it. Thirty minutes spent reviewing it is cheaper than a mid-build
   `schema` issue that resets three graphs.
 
 ### Then
 
-**#30 closes → #1 opens → #1 merges → the freeze lands.** Announce it. Everyone resets their graph.
+**#30 closes → Laksh runs #1 → #1 merges → the freeze lands.** Announce it. Everyone resets their
+graph. #1 moved to T3 with `graph.jac` and it is the blocking first task, so it comes before Laksh's
+surface work.
 
 After that all three tracks fan out against `CONTRACTS.md`, stubbing every producer that does not
-exist yet (§7). Laksh writes #17.
+exist yet (§7). Laksh then writes #17.
 
 **Schedule the rehearsal merge now, for the midpoint** — the moment all five files compile together.
 It is thirty minutes on a throwaway branch and it is the difference between a final merge that works

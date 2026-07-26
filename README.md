@@ -18,9 +18,11 @@ into "I've been okay, I guess."
 
 ## What it does
 
-The patient checks in daily about how they feel and what they took. A persistent graph accumulates
-those check-ins as typed beliefs linked to deterministically-parsed medication anchors. Two things
-run off it:
+The patient checks in daily — **by typing, or by voice** — about how they feel and what they took.
+Typing is the default; voice is a one-tap option for the days it's the real barrier, since
+chemotherapy fatigue, nausea, and neuropathy make typing hard exactly when the daily logging every
+downstream finding depends on matters most. A persistent graph accumulates those check-ins as typed
+beliefs linked to deterministically-parsed medication anchors. Two things run off it:
 
 - **An interaction gate.** Before a new substance enters the regimen, a mandatory graph traversal
   runs. A hard constraint violation blocks.

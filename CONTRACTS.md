@@ -13,31 +13,35 @@ breaks at runtime, not at `jac check`.
 
 ## 1. Ownership
 
-**Three people, three tracks.** T1 Bryan · T2 Nathan · T3 Laksh.
+**Three people, five files — split 3 / 1 / 1.** Laksh owns three (`graph.jac` + the surface); Bryan
+and Nathan own one deep walker module each. Person↔track: T1 Bryan · T2 Nathan · T3 Laksh.
 
 **Five files during the build. One file at submission.** See section 1a for the merge.
 
 | File | Owner | Holds |
 |---|---|---|
-| `graph.jac` | **T1 Bryan** — nodes/edges frozen after #1 | nodes, edges, report objs |
+| `graph.jac` | **T3 Laksh** — nodes/edges frozen after #1 | nodes, edges, report objs |
+| `main.jac` | **T3 Laksh** | `Prepare`, templates, imports, `cl { }` mounting the page |
+| `page.cl.jac` | **T3 Laksh** | the concerns page, rows, activity panel, typed + voice check-in surface |
 | `write.jac` | **T1 Bryan** | `Remember`, `Consolidate`, vocab `glob`, regimen parse, seed patient, `DEMO_MODE` |
 | `read.jac` | **T2 Nathan** | `Recall` (both channels, detection, corroboration), `Vigil`, `Investigate`, eval harness, quarantined baseline |
-| `main.jac` | **T3 Laksh** | `Prepare`, templates, imports, `cl { }` mounting the page |
-| `page.cl.jac` | **T3 Laksh** | the concerns page, rows, activity panel, check-in surface |
 | `jac.toml`, `styles/global.css` | **T3 Laksh** | config and the one stylesheet |
 
-**Every file has exactly one owner.** Bryan two, Nathan one, Laksh three. Nobody has a reason to open
-someone else's file, so merge conflicts are impossible by construction rather than by convention.
+**Every file has exactly one owner.** Laksh three (`graph.jac`, `main.jac`, `page.cl.jac`), Bryan one
+(`write.jac`), Nathan one (`read.jac`). Nobody has a reason to open someone else's file, so merge
+conflicts are impossible by construction rather than by convention.
 
-**The report objs are Bryan's even though Laksh consumes them most**, because they live in `graph.jac`
-and Bryan writes that file in #1. Two owners on one file is the single thing this layout exists to
-prevent. Laksh is not blocked: every obj is fully specified in sections 3 and 4, so the page builds
-against the pinned shape regardless of who typed it.
+**The report objs live in `graph.jac`, which Laksh owns** — the track that also consumes them most.
+Laksh owns the schema, the page, and the merge target (`graph.jac`, `page.cl.jac`, `main.jac`) end to
+end, and all three collapse into `main.jac` at submission. Every obj is fully specified in sections 3
+and 4, so Bryan and Nathan build against the pinned shape regardless of who typed it.
 
 **Why the work sits where it does.** `DEMO_MODE` is Bryan's because both `by llm()` sites it branches
-live in `write.jac`. The platform chores are Nathan's because it is his jachammer account, and
-because T2 is the only track with a free first hour — everything in it waits on #1. Laksh owns the
-surface top to bottom, `Prepare` through the rendered row.
+live in `write.jac`. The platform chores are Nathan's because it is his jachammer account. Laksh owns
+the schema and the surface top to bottom — `graph.jac` through the rendered row — coherent because all
+three Laksh files merge into `main.jac`. **Consequence to accept:** Laksh now owns #1 (the schema
+freeze), the blocking first task, so #1 lands before Laksh's surface work — and Nathan, the heaviest
+schema consumer, still reviews the #1 completeness checklist first (`CONTRIBUTING.md` §1a).
 
 **`page.cl.jac` exists for one reason: HMR reloads only `.cl.jac` files.** Server modules need a full
 restart. The page is the file that gets iterated on most, so it stays where the fast reload is until
@@ -52,8 +56,8 @@ everyone else resets their graph after.
 
 **`obj` archetypes are transient values** constructed per walker run. Changing `Verdict` or `Row`
 corrupts nothing and requires no reset. They share `graph.jac` for merge simplicity and are **not
-frozen** — changing one costs an ack, not a graph reset — but Bryan applies the change, because he
-owns the file.
+frozen** — changing one costs an ack, not a graph reset — but Laksh applies the change, because Laksh
+owns `graph.jac`.
 
 Not frozen is not unowned. Report objs are pinned below, and changing one needs the `contract` label
 plus an ack, because all three tracks build against them.
@@ -165,7 +169,7 @@ set is a safety change, not a schema change.
 
 ## 3. Report objects
 
-**Transient, not frozen.** Lives in `graph.jac` alongside the archetypes, built in #29 by Bryan. Safe to iterate; still needs
+**Transient, not frozen.** Lives in `graph.jac` alongside the archetypes, built in #29 by Laksh. Safe to iterate; still needs
 the `contract` label to change, because three tracks consume these.
 
 ```jac
@@ -222,6 +226,12 @@ walker Prepare     { has include_log: bool = False;               has out: PageM
 
 **Every walker reports exactly once, from `with Root exit`.** One typed object. Not a list of
 fragments.
+
+**Voice check-in adds no walker and no shape.** The check-in surface in `page.cl.jac` captures a typed
+check-in — or, optionally, dictation via the browser Web Speech API — and calls
+`Remember(text=<check-in>, role="patient", at=<today>)`, the signature above, unchanged.
+Speech-to-text is a browser API, not a `by llm()` site (`ARCHITECTURE.md` §8), and introduces nothing
+to pin here.
 
 ```jac
 obj CaseFile  { has onset: str; has timeline: list[TimelineEntry] = [];

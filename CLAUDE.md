@@ -101,6 +101,24 @@ stale line — a conventional type-checker sees nothing across that seam.
 - Client entry is `def:pub app()` — lowercase, not `App()`.
 - `[serve] base_route_app = "app"` in `jac.toml` serves the client at `/`.
 
+### Voice check-in (browser Web Speech API)
+
+The daily check-in **defaults to typing, with an optional voice toggle** (browser Web Speech API; see
+`ARCHITECTURE.md` §5). It lives in `page.cl.jac`, collapses into `main.jac`, and uses **no npm
+dependency** and **no `.style.css` annex** (merge disciplines, `CONTRACTS.md` §1a).
+
+- **Reach the API through browser interop.** `webkitSpeechRecognition` is a browser global. Strip the
+  type before touching it: `g: any = globalThis; Rec = g.SpeechRecognition or
+  g.webkitSpeechRecognition;` then `rec = new(Rec);` (the `new(...)` builtin, **not** a `new`
+  keyword). Set `rec.continuous` / `rec.interimResults` / `rec.lang`, assign `rec.onresult` /
+  `onerror` / `onend` lambdas, and invoke the stored transcript callback with `cb.call(None, text)`.
+  Full recipe: `jac guide jac-cl-js-interop`.
+- **`jac check` warns and is right to.** Browser globals raise W2001/W6002 in isolation — correct at
+  runtime, `jac build` succeeds. Suppress per line with `# jac:ignore[CODE]`; do not "fix" them.
+- **Not a `by llm()` site.** Transcription is a platform call; the two-site cap is untouched.
+- **On the final transcript, `root spawn Remember(text=…, role="patient", at=…)`.** Keep the
+  transcript in an editable field so `DEMO_MODE` fixture keys still match after a mis-hearing.
+
 ### The graph reset path — resolved by #30
 
 **Three paths, in order of preference. All verified on Jac 0.16.7 locally.**
@@ -135,7 +153,8 @@ load and quarantine both drop what no longer maps — so the freeze and the anno
 **Caveat: this was measured locally on 0.16.7 with the SQLite backend.** Confirm the Jac version in
 jachammer before relying on it.
 
-## Gotchas that cost an hour each
+### Gotchas that cost an hour each
+
 - **Edge abilities are a silent no-op.** `can ... with Walker entry` inside an `edge` compiles clean
   and never fires. All scoring lives in walker node abilities reading `[edge ...]`.
 - **`++>` returns a list.** `b = (anchor ++> Belief(claim=c))[0];`. A missing `[0]` fails somewhere
@@ -223,8 +242,8 @@ utilities by conflicting with Preflight.
   service, no separate React app.
 - **Zero non-Jac artifacts.** The vocabulary and curated interaction table are inline `glob`s, not
   JSON files — jachammer has no filesystem.
-- **Five files during the build, one at submission.** `graph.jac` (frozen) · `write.jac` (Bryan) ·
-  `read.jac` (Nathan) · `main.jac` + `page.cl.jac` (Laksh). They collapse into `main.jac` before the
+- **Five files during the build, one at submission.** `graph.jac` (frozen) + `main.jac` +
+  `page.cl.jac` (Laksh) · `write.jac` (Bryan) · `read.jac` (Nathan). They collapse into `main.jac` before the
   deadline. **Read `CONTRACTS.md` §1a before writing a line** — four disciplines have to hold from the
   first commit or the merge stops being mechanical.
 - **The four merge disciplines, in short:** prefix private helpers by home file (`wr_`, `rd_`, `pg_`);
@@ -242,8 +261,9 @@ utilities by conflicting with Preflight.
 - Work from an issue. Branch, PR, and label conventions are in `CONTRIBUTING.md`.
 - **Check `CONTRACTS.md` before changing any shared shape**, and follow the announcement rule there
   if you must.
-- **Stay in your own file.** Bryan owns `write.jac`, Nathan owns `read.jac`, Laksh owns `main.jac`
-  and `page.cl.jac`. `graph.jac` is frozen after #1 — its nodes and edges need a `schema` issue.
+- **Stay in your own file.** Laksh owns `graph.jac`, `main.jac`, and `page.cl.jac`; Bryan owns
+  `write.jac`; Nathan owns `read.jac`. `graph.jac`'s nodes and edges are frozen after #1 — changes
+  need a `schema` issue.
 - Do not start a new task while a prior one has a failing acceptance check.
 - Surface the open decisions in `ARCHITECTURE.md` section 18 rather than resolving them.
 - When reporting, state: which issue, which acceptance check passed, and any invariant currently
