@@ -18,13 +18,10 @@ There are ZERO model-call sites in this file, by design. The two the app is allo
 write path (`write.jac`). If page copy reads awkwardly, fix the template — never reach for a model.
 """
 
-# Import ONLY the transient report objs — the surface's contract seam (CONTRACTS §3/§4). The
-# persisted node/edge archetypes (Utterance, Observation, Raised, …) are issue #1, still blocked on
-# the #30 graph-reset path, so they are deliberately NOT referenced here: Prepare resolves evidence
-# and status by duck-typing the graph (jobj + hasattr) rather than by importing node types. That
-# keeps this file compiling against the report-objs-only graph.jac that exists today, and it plugs
-# straight into the real nodes the moment #1 lands.
-import from graph { Concern, Citation, Row, PageModel }
+# Import the transient report objs (the surface's contract seam, CONTRACTS §3/§4) and the persisted
+# node archetypes now that #1 has frozen them. Evidence/status resolution narrows against the real
+# node types (isinstance / [?:Raised]) instead of jobj+hasattr duck-typing (#46).
+import from graph { Concern, Citation, Row, PageModel, Utterance, Observation, Raised }
 
 
 # ==========================================================================================
@@ -125,8 +122,8 @@ def pg_render(kind: str, slots: dict[str, str]) -> list[str] {
 def pg_cites(c: Concern) -> list[Citation] {
     cites: list[Citation] = [];
     for ev in c.evidence {
-        n: any = jobj(ev);  # jac:ignore[W1037] — duck-typed graph node; #1 node types not landed yet
-        if (n is not None) and hasattr(n, "text") and hasattr(n, "role") {
+        n = jobj(ev);
+        if isinstance(n, Utterance) {   # #1 archetypes landed: narrow instead of duck-typing
             cites.append(Citation(text=n.text, role=n.role, at=n.at));
         }
     }
@@ -139,8 +136,8 @@ def pg_cites(c: Concern) -> list[Citation] {
 def pg_noticed(c: Concern) -> list[str] {
     dates: list[str] = [];
     for ev in c.evidence {
-        n: any = jobj(ev);  # jac:ignore[W1037] — duck-typed graph node; #1 node types not landed yet
-        if (n is not None) and hasattr(n, "metric") and hasattr(n, "at") {
+        n = jobj(ev);
+        if isinstance(n, Observation) {   # #1 archetypes landed: narrow instead of duck-typing
             if n.at not in dates { dates.append(n.at); }
         }
     }
@@ -153,8 +150,8 @@ def pg_latest_level(c: Concern) -> str {
     latest_at: str = "";
     val: str = "";
     for ev in c.evidence {
-        n: any = jobj(ev);  # jac:ignore[W1037] — duck-typed graph node; #1 node types not landed yet
-        if (n is not None) and hasattr(n, "metric") and hasattr(n, "value") {
+        n = jobj(ev);
+        if isinstance(n, Observation) {   # #1 archetypes landed: narrow instead of duck-typing
             if n.at >= latest_at { latest_at = n.at; val = str(n.value); }
         }
     }
@@ -239,12 +236,9 @@ def pg_slots(c: Concern, cites: list[Citation]) -> dict[str, str] {
 # Recall attaches Raised directly under root; if that wiring differs this returns "open" (safe
 # default) — reconcile at the Recall integration.
 def pg_status(c: Concern, at_root: Root) -> str {
-    for r0 in [at_root -->] {
-        r: any = r0;  # jac:ignore[W1037] — duck-typed Raised node; #1 node types not landed yet
-        if hasattr(r, "anchor_key") and hasattr(r, "status") and hasattr(r, "kind") {
-            if r.kind == c.kind and r.anchor_key == c.anchor {
-                return r.status;
-            }
+    for r in [at_root -->[?:Raised]] {   # #1 archetypes landed: typed filter instead of duck-typing
+        if r.kind == c.kind and r.anchor_key == c.anchor {
+            return r.status;
         }
     }
     return "open";
@@ -317,7 +311,7 @@ def pg_row(c: Concern, at_root: Root) -> Row | None {
 # Zero model calls. Zero edge-weight mutations. It never reinforces.
 # ==========================================================================================
 
-walker Prepare {
+walker:pub Prepare {   # :pub — client-spawned (page.cl.jac `root spawn Prepare`); plain walker => Unauthorized (#34)
     has include_log: bool = False;
     has out: PageModel = PageModel();
 

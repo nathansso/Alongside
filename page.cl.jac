@@ -398,9 +398,10 @@ def:pub CheckInSurface(onSubmit: Callable[[str], None]) -> JsxElement {
             fin = "";
             intr = "";
             i = 0;
-            while i < ev.results.length {   # jac:ignore[W6004]
-                seg = ev.results[i][0].transcript;
-                if ev.results[i].isFinal { fin = fin + seg; }
+            while i < (ev.results.length as int) {   # jac:ignore[W6004]
+                seg: str = ev.results[i][0].transcript as str;      # browser API is untyped; assert the shape
+                is_final: bool = ev.results[i].isFinal as bool;
+                if is_final { fin = fin + seg; }
                 else { intr = intr + seg; }
                 i = i + 1;
             }
@@ -475,7 +476,7 @@ def:pub ConcernsPage() -> JsxElement {   # jac:ignore[W3005]
             # Unknown-typed. The cast keeps this file jac-check-clean now and is redundant (not
             # wrong) once Prepare lands in main.jac. The payload is re-asserted `as PageModel`.
             res: any = (root spawn Prepare(include_log=True)) as any;   # jac:ignore[W1051, W2001, W1037]
-            if res and res.reports and len(res.reports) > 0 {
+            if res and res.reports {   # truthy list; avoids len(<any>) -> Sized E1053
                 m = res.reports[0] as PageModel;
             }
         } except Exception as e {
@@ -488,7 +489,7 @@ def:pub ConcernsPage() -> JsxElement {   # jac:ignore[W3005]
     async def refresh {   # jac:ignore[W3005]
         try {
             res: any = (root spawn Prepare(include_log=True)) as any;   # jac:ignore[W1051, W2001, W1037]
-            if res and res.reports and len(res.reports) > 0 {
+            if res and res.reports {   # truthy list; avoids len(<any>) -> Sized E1053
                 model = res.reports[0] as PageModel;
             }
         } except Exception as e {
@@ -525,13 +526,15 @@ def:pub ConcernsPage() -> JsxElement {   # jac:ignore[W3005]
         try {
             k = pg_kind_for(model, rid);
             res: any = (root spawn Investigate(concern_kind=k, anchor=rid)) as any;   # jac:ignore[W1051, W2001, W1037]
-            if res and res.reports and len(res.reports) > 0 {
+            if res and res.reports {   # truthy list; avoids len(<any>) -> Sized E1053
                 cf = res.reports[0] as CaseFile;
             }
         } except Exception as e {
             console.log("[page] Investigate unavailable — rendering fixture:", e);   # jac:ignore[W2001, W6002]
         }
-        case_files = {**case_files, rid: cf};
+        merged: dict[str, CaseFile] = {**case_files};   # typed local; bare spread infers a union (#46)
+        merged[rid] = cf;
+        case_files = merged;
     }
 
     def toggle_inspector(_e: MouseEvent) { show_inspector = not show_inspector; }
