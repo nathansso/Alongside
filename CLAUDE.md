@@ -145,7 +145,8 @@ The deployment target is a browser IDE. Confirmed from its docs, see `ARCHITECTU
   (`text-muted-foreground`, `bg-card`, `border`) rather than hardcoded grays. `jac add --shadcn
   <name>` is **bundled and offline** — no network — so pulling in a missing primitive should work
   even if npm installs don't. Never hand-write a primitive that exists in `components/ui/`.
-- **No** → **use `.style.css` annex files.** Zero dependencies, no build plugin, no `jac install`.
+- **No** → **one `styles/global.css`**, imported once inside `main.jac`'s `cl { }` block. Zero
+  dependencies, no build plugin, no `jac install`.
 
 **Do not add Tailwind to a non-shadcn project here.** That path needs
 `jac add --npm --dev tailwindcss @tailwindcss/vite` plus a `[plugins.client.vite]` block, and
@@ -153,32 +154,21 @@ The deployment target is a browser IDE. Confirmed from its docs, see `ARCHITECTU
 jachammer runs `jac install` on a `jac.toml` change is not documented anywhere in its platform docs.
 Not a risk worth taking for styling.
 
-### `.style.css` annexes — the default, and why they suit three people
+### Do NOT use `.style.css` annex files
 
-A CSS file with the **same base name** as a component is auto-scoped to that module. No import — the
-compiler pairs them, hashes each declared class, and rewrites the matching `className` literals.
+Jac supports them and they are genuinely nice: a CSS file with the same **base name** as a component
+is auto-scoped, classes are hashed, no import needed. **They are still wrong for this project.**
 
-```jac
-# components/ConcernRow.cl.jac
-def:pub ConcernRow(row: Row) -> JsxElement {
-    return <div className="row"><h3 className="row-q">{row.question}</h3></div>;
-}
-```
-```css
-/* components/ConcernRow.style.css — paired by base name; do NOT import it */
-.row { padding: 1rem; border: 1px solid #ddd; }
-.row-q { font-weight: 600; }
-:global(body) { margin: 0; }   /* :global() opts out of scoping */
-```
+**The annex pairs to its component by base name.** When `page.cl.jac`'s body moves into `main.jac` at
+the final merge (`CONTRACTS.md` §1a), `page.style.css` orphans and every style silently disappears —
+no error, no `jac check` warning, just an unstyled page found late.
 
-`className="row"` compiles to `row-1419142b`, so **two people can both declare `.row` and never
-collide.** Each component is one owner, two files, and there is no shared global stylesheet to fight
-over — which is the whole reason this is the default rather than a compromise.
+So: **one `styles/global.css`, hand-prefixed class names** (`pg-row`, `pg-row-q`). We give up
+compiler-hashed scoping and get a merge that cannot break. Since Laksh owns every file that has any
+CSS in it, there is no one to collide with anyway.
 
-- Base name must match **exactly**: `ConcernRow.cl.jac` ↔ `ConcernRow.style.css`.
-- Undeclared class tokens pass through untouched, so scoped and utility classes can mix.
-- Plain-CSS projects **may** use a `*` reset. Tailwind projects may not — it collapses spacing
-  utilities by conflicting with Preflight.
+A plain-CSS project **may** use a `*` reset. A Tailwind project may not — it collapses spacing
+utilities by conflicting with Preflight.
 
 ## Conventions
 
@@ -186,13 +176,16 @@ over — which is the whole reason this is the default rather than a compromise.
   service, no separate React app.
 - **Zero non-Jac artifacts.** The vocabulary and curated interaction table are inline `glob`s, not
   JSON files — jachammer has no filesystem.
-- **`main.jac` is the spine, owned by T3 (Laksh) alone. Do not edit it** — see `CONTRACTS.md` §1a. In #17 it
-  is the literal single-file vertical slice (inline archetypes + `Remember` + `Prepare` + the page
-  UI), and that commit is tagged `single-file-slice`. After that it shrinks to `include` lines plus
-  the `cl { }` entry. Contributions reach it as modules; you comment the `include` line on #17.
-- **Never refactor the `cl { }` block out of `main.jac`.** Server and client in one mixed-context
-  entry file is a scored rubric property. Sub-components live in `components/*.cl.jac`.
-- **`walkers/recall.jac` contains no `while` loop.** Policy lives on node-type abilities.
+- **Five files during the build, one at submission.** `graph.jac` (frozen) · `write.jac` (Bryan) ·
+  `read.jac` (Nathan) · `main.jac` + `page.cl.jac` (Laksh). They collapse into `main.jac` before the
+  deadline. **Read `CONTRACTS.md` §1a before writing a line** — four disciplines have to hold from the
+  first commit or the merge stops being mechanical.
+- **The four merge disciplines, in short:** prefix private helpers by home file (`wr_`, `rd_`, `pg_`);
+  `root spawn` only, never `sv import` or function RPC; one `styles/global.css`, no `.style.css`
+  annexes; satellites import only from `graph.jac`, never from each other.
+- **Stay in your own file.** Do not "helpfully" edit another track's file. The no-conflict guarantee
+  is structural, and it only holds if nobody crosses.
+- **`Recall` contains no `while` loop.** Policy lives on node-type abilities.
 - **No scheduler, cron, or background sweep.** `Vigil` on app open is the trigger.
 - **Never cut `Prepare` or the concerns page.** It is the deliverable. Drop order is `Shortcut`,
   then channel-A reinforcement, then `Investigate` step 3, then channel A.
@@ -202,9 +195,8 @@ over — which is the whole reason this is the default rather than a compromise.
 - Work from an issue. Branch, PR, and label conventions are in `CONTRIBUTING.md`.
 - **Check `CONTRACTS.md` before changing any shared shape**, and follow the announcement rule there
   if you must.
-- **Two files are single-owner. Do not edit either on a feature branch.** `graph/archetypes.jac`
-  (frozen after stage 1 — open a `schema` issue) and `main.jac` (T3's — comment the `include` line
-  you need on #17).
+- **Stay in your own file.** Bryan owns `write.jac`, Nathan owns `read.jac`, Laksh owns `main.jac`
+  and `page.cl.jac`. `graph.jac` is frozen after #1 — its nodes and edges need a `schema` issue.
 - Do not start a new task while a prior one has a failing acceptance check.
 - Surface the open decisions in `ARCHITECTURE.md` section 18 rather than resolving them.
 - When reporting, state: which issue, which acceptance check passed, and any invariant currently

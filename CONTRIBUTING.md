@@ -13,8 +13,8 @@ Everything else in this file is detail. These four do the work:
 
 1. **One issue owns one file.** The repo layout is one file per walker precisely so that issues map
    to files. If your issue needs two files in two tracks, it is two issues.
-2. **`graph/archetypes.jac` is frozen after stage 1** and owned by T1. Editing it on a feature
-   branch corrupts everyone's persisted graph on merge.
+2. **The nodes and edges in `graph.jac` are frozen after #1.** Editing one on a feature branch
+   corrupts everyone's persisted graph on merge.
 3. **`main.jac` is owned by T3 and nobody else opens it.** Your code goes in a module you own; you
    comment on #17 with the `include` line you need. See `CONTRACTS.md` §1a — this is the answer to
    "how do three people share one file", and the answer is that they don't.
@@ -29,9 +29,9 @@ Three people, three tracks.
 
 | Track | Owner | Label | Owns | Issues |
 |---|---|---|---|---|
-| **T1 — Graph & Write** | **Bryan** | `track:graph-write` | `graph/archetypes.jac`, `graph/vocab.jac`, `ingest/regimen.jac`, `walkers/remember.jac`, `walkers/consolidate.jac`, `seed/patient.jac`, `DEMO_MODE` | 8 |
-| **T2 — Traversal & Eval** | **Nathan** | `track:traversal-eval` | `walkers/recall.jac`, `walkers/investigate.jac`, `walkers/vigil.jac`, `eval/*`, the jachammer project and deploys | 13 |
-| **T3 — Surface & Demo** | **Laksh** | `track:surface-demo` | **`main.jac`**, `jac.toml`, `walkers/prepare.jac`, `render/templates.jac`, `components/*.cl.jac`, `graph/reports.jac` | 9 |
+| **T1 — Graph & Write** | **Bryan** | `track:graph-write` | **`write.jac`** — `Remember`, `Consolidate`, vocab `glob`, regimen parse, seed patient, `DEMO_MODE` | 8 |
+| **T2 — Traversal & Eval** | **Nathan** | `track:traversal-eval` | **`read.jac`** — `Recall`, `Vigil`, `Investigate`, eval, baseline; plus the jachammer project and deploys | 13 |
+| **T3 — Surface & Demo** | **Laksh** | `track:surface-demo` | **`main.jac`** (`Prepare`, templates, `cl { }`) + **`page.cl.jac`** (the page) + `jac.toml`, `styles/global.css` | 9 |
 
 **T3 is deliberately unblocked.** The concerns page is the deliverable and it can be built entirely
 against the `PageModel` contract before a single traversal is real. T3 also owns the surface top to
@@ -91,7 +91,7 @@ green. It is the demo spine, and it is the thing that tells you which stubs stil
 |---|---|
 | `track:graph-write` `track:traversal-eval` `track:surface-demo` | which track owns it |
 | `stage:1` … `stage:10` | which build stage from `ARCHITECTURE.md` §11 |
-| `schema` | touches `graph/archetypes.jac`. **Serialize these. Announce on merge.** |
+| `schema` | touches a node or edge in `graph.jac`. **Serialize these. Announce on merge.** |
 | `spine` | needs a line in `main.jac`. **Do not edit it — comment the line on #17.** |
 | `contract` | changes a pinned shape in `CONTRACTS.md`. Needs an ack before merge. |
 | `safety` | touches anything governed by S1–S9 or A1–A9. Needs a second reader. |
@@ -112,7 +112,7 @@ Body, five lines:
 
 ```markdown
 **Track:** T2
-**Files:** walkers/vigil.jac
+**Files:** read.jac
 **Contract:** consumes PageModel; produces Concern(kind=adherence_gap|silence|...)
 **Blocked by:** #3 (archetypes)
 **Acceptance:** on the seeded graph with a 4-day observation gap, Vigil emits
@@ -184,11 +184,11 @@ unless your change actually resolves them too.
 
 ## 6. Handling the three special labels
 
-### `schema` — touching `graph/archetypes.jac`
+### `schema` — touching a node or edge in `graph.jac`
 
 The file corrupts every persisted graph when it changes. So:
 
-1. Only its owner edits it.
+1. It is frozen after #1; only a `schema` issue reopens it.
 2. Batch schema changes — don't merge three in a row.
 3. On merge, comment in the team channel: **"schema changed, reset your graph."**
 4. Everyone pulls, then clears their persisted graph (locally `rm -rf .jac/data/`; on jachammer,

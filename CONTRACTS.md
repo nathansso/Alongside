@@ -15,106 +15,123 @@ breaks at runtime, not at `jac check`.
 
 **Three people, three tracks.** T1 Bryan · T2 Nathan · T3 Laksh.
 
-| Area | Files | Owner |
+**Five files during the build. One file at submission.** See section 1a for the merge.
+
+| File | Owner | Holds |
 |---|---|---|
-| Graph schema — **persisted** | `graph/archetypes.jac` (nodes + edges) | **T1 — frozen after stage 1** |
-| Vocabulary + ingest | `graph/vocab.jac`, `ingest/regimen.jac` | T1 |
-| Write path | `walkers/remember.jac`, `walkers/consolidate.jac` | T1 |
-| Seed graph + fixtures | `seed/patient.jac` | T1 |
-| `DEMO_MODE` branches | both `by llm()` sites | T1 |
-| Read path | `walkers/recall.jac`, `walkers/investigate.jac`, `walkers/vigil.jac` | T2 |
-| Eval | `eval/*` | T2 |
-| Platform + deploy | jachammer project, env vars, remote, deploys | T2 |
-| **Spine** | **`main.jac`, `jac.toml`** | **T3 — single owner. Nobody else opens these files.** |
-| `Prepare` | `walkers/prepare.jac` | T3 |
-| Templates | `render/templates.jac` | T3 |
-| Page UI | `components/*.cl.jac` + paired `*.style.css` | T3 |
-| Report objects — **transient** | `graph/reports.jac` (objs) | T3; **not frozen**, `contract` label to change |
+| `graph.jac` | **T1 Bryan** — nodes/edges frozen after #1 | nodes, edges, report objs |
+| `write.jac` | **T1 Bryan** | `Remember`, `Consolidate`, vocab `glob`, regimen parse, seed patient, `DEMO_MODE` |
+| `read.jac` | **T2 Nathan** | `Recall` (both channels, detection, corroboration), `Vigil`, `Investigate`, eval harness, quarantined baseline |
+| `main.jac` | **T3 Laksh** | `Prepare`, templates, imports, `cl { }` mounting the page |
+| `page.cl.jac` | **T3 Laksh** | the concerns page, rows, activity panel, check-in surface |
+| `jac.toml`, `styles/global.css` | **T3 Laksh** | config and the one stylesheet |
 
-**Why the work sits where it does.** `DEMO_MODE` is T1's because both `by llm()` sites it branches
-are T1's files. The platform chores are T2's because it is Nathan's jachammer account, and because
-T2 is the only track with a free first hour — everything in it waits on #1. T3 owns the surface top
-to bottom, from `Prepare` through the rendered row, which is what makes single ownership of
-`main.jac` workable.
+**Every file has exactly one owner.** Bryan two, Nathan one, Laksh three. Nobody has a reason to open
+someone else's file, so merge conflicts are impossible by construction rather than by convention.
 
-**Two files are single-owner, for different reasons.** `graph/archetypes.jac` because editing it
-corrupts everyone's persisted graph. `main.jac` because it is the one file every track would
-otherwise need to touch — see section 1a.
+**The report objs are Bryan's even though Laksh consumes them most**, because they live in `graph.jac`
+and Bryan writes that file in #1. Two owners on one file is the single thing this layout exists to
+prevent. Laksh is not blocked: every obj is fully specified in sections 3 and 4, so the page builds
+against the pinned shape regardless of who typed it.
 
-**The freeze covers persisted archetypes only, and that distinction is load-bearing.**
+**Why the work sits where it does.** `DEMO_MODE` is Bryan's because both `by llm()` sites it branches
+live in `write.jac`. The platform chores are Nathan's because it is his jachammer account, and
+because T2 is the only track with a free first hour — everything in it waits on #1. Laksh owns the
+surface top to bottom, `Prepare` through the rendered row.
+
+**`page.cl.jac` exists for one reason: HMR reloads only `.cl.jac` files.** Server modules need a full
+restart. The page is the file that gets iterated on most, so it stays where the fast reload is until
+the final merge.
+
+### The freeze covers persisted archetypes only, and that distinction is load-bearing
 
 Only `node` and `edge` archetypes are graph-persisted. Changing one invalidates every existing
-`NodeAnchor` and forces a reset for every collaborator, so `graph/archetypes.jac` is **frozen after
-stage 1**: changes go through an issue labeled `schema`, are made by its owner, are batched, and are
-announced — everyone else resets their graph after.
+`NodeAnchor` and forces a reset for every collaborator, so the **nodes and edges** in `graph.jac` are
+**frozen after #1**: changes go through an issue labeled `schema`, are batched, and are announced —
+everyone else resets their graph after.
 
 **`obj` archetypes are transient values** constructed per walker run. Changing `Verdict` or `Row`
-corrupts nothing and requires no reset. They live in `graph/reports.jac`, are **not frozen**, and
-Track 3 may iterate on them as the page teaches us what `Row` actually needs — which it will.
+corrupts nothing and requires no reset. They share `graph.jac` for merge simplicity and are **not
+frozen** — changing one costs an ack, not a graph reset — but Bryan applies the change, because he
+owns the file.
 
-Not frozen is not unowned. Report objs are still pinned below, and changing one needs the `contract`
-label plus an ack, because three tracks build against them.
+Not frozen is not unowned. Report objs are pinned below, and changing one needs the `contract` label
+plus an ack, because all three tracks build against them.
 
 ---
 
-## 1a. `main.jac` — how three people share one file
+## 1a. Develop in five files, ship one
 
-**They don't. T3 owns it for the entire build. T1 and T2 never open it.**
+The hackathon rewards single-file full-stack development. Three people cannot write one file at once.
+Both are satisfiable, because **the claim is about the deliverable, not the git history.**
 
-`main.jac` is the mixed-context entry point: server archetypes and walkers at top level, the browser
-UI in a `cl { }` block. It is the file that carries the single-file claim, which means every track
-has a reason to want to edit it, which means it is the single most likely source of merge conflicts
-in the repo. So it is governed like archetypes, not like a shared workspace.
+So: five files while building, collapsed into `main.jac` before submission. Jac archetypes are flat
+within a module — a `walker Recall { ... }` pasted from `read.jac` into `main.jac` needs no wrapper,
+no re-indentation, no nesting. The merge is concatenation plus deleting import lines.
 
-### The protocol
+**It is only that easy if all four rules below hold from the first commit. Retrofitting them at hour
+20 is where this goes wrong.**
 
-**Contributions arrive as modules, not as edits.**
+### The four merge disciplines
 
-Your code lives in a file you own — `walkers/recall.jac`, `graph/vocab.jac`,
-`walkers/consolidate.jac`. When it needs to be reachable from the spine, you **comment on #17 with
-the exact line to add**, and T3 adds it. You do not push a commit that touches `main.jac`. Ever.
+**1. Prefix every private helper with its home file.** `wr_parse_dose`, `rd_score_edge`,
+`pg_fmt_date`. Archetypes and walkers keep their real names — they are globally unique by design. A
+duplicate helper name is the only collision a merge can actually produce, and this eliminates it.
 
-```
-# comment on #17
-walkers/recall.jac is on main as of #8. Add:
-    include walkers.recall;
-```
+**2. `root spawn` only. Never `sv import`, never function RPC.** Already required by section 4, but
+it is load-bearing for the merge: **an `sv import` inside the entry module's own `cl { }` block does
+not register the endpoint.** A page built on `sv import` works in `page.cl.jac` and breaks the moment
+its body moves into `main.jac`. Walker spawn is immune.
 
-That reduces the shared surface of `main.jac` to a single alphabetically-ordered `include` list. Two
-people adding a line at once is a one-line textual conflict with no semantics in it — trivial to
-resolve, and it cannot break the build in a way that `jac check .` won't catch immediately.
+**3. One `styles/global.css`. No `.style.css` annex files.** Annexes pair to a component by *base
+name*; when `page.cl.jac`'s content moves into `main.jac`, the pairing orphans and the styles
+silently vanish. Prefix classes by hand (`pg-row`, `pg-row-q`) and import the single stylesheet once
+inside the `cl { }` block. We trade compiler-hashed scoping for a merge that cannot break.
 
-### The two phases, and why the single-file claim survives
+**4. Satellites import only from `graph.jac`, never from each other.** `read.jac` and `write.jac` do
+not know each other exists. The merge is then a concatenation in a fixed order with no dependency
+untangling and no circular-import surprises.
 
-**Phase 1 — #17. `main.jac` is literally the whole app.** Inline archetypes, inline `Remember`,
-inline `Prepare`, inline `cl { }` page. Around 150 lines. One author, one sitting, no coordination
-cost because nothing else exists yet. This is the real vertical slice: check-in → graph write →
-traversal → rendered page, all in one file, one language.
-
-**Tag that commit.**
+### Merge order
 
 ```
-git tag -a single-file-slice -m "Full vertical slice: graph, walkers, and UI in one file"
-git push origin single-file-slice
+archetypes  ->  report objs  ->  globs  ->  write walkers
+            ->  read walkers  ->  Prepare  ->  templates  ->  cl { }
 ```
 
-**Phase 2 — everything after.** As real modules land, T3 replaces inline bodies with `include`
-lines. `main.jac` stays the entry point and stays under ~80 lines.
+End state: `main.jac` + `jac.toml` + `styles/global.css`.
 
-The tag is what makes both claims true at judging time. *"The entire app was one file"* is
-demonstrable at a commit hash. *"The entry point is still one mixed-context file, server and client
-together, no separate frontend and no separate Python service"* is true of `main`. Neither claim
-needs three people editing one file, which is the thing that was never going to work.
+### Merge twice
 
-### If you find yourself wanting to edit `main.jac`
+The classic failure is merging at hour 22 and finding a problem with no time to fix it.
 
-That is the signal your work belongs in a module. Move it into one and comment on #17.
+**Rehearsal merge at the midpoint.** Throwaway branch, one person, thirty minutes, the moment all
+five files compile together. `jac check .` is the gate. Delete the branch afterward — its only job is
+to surface every mechanical problem while fixing them is still cheap.
+
+**Then the real merge near the end** is a repeat of something already done once.
+
+**Tag the merge commit** so the single-file artifact is citable:
+
+```
+git tag -a single-file -m "Whole app in main.jac: archetypes, walkers, by llm(), traversal, UI"
+git push origin single-file
+```
+
+### What to claim, and what not to
+
+**True and worth saying:** `main.jac` is the entire application — graph schema, both `by llm()`
+sites, a real multi-hop traversal, and the browser UI, in one file, in one language, with no separate
+frontend and no separate Python service.
+
+**Do not imply the history was one file.** Developing in modules and consolidating is ordinary
+engineering, and the deliverable is what gets judged.
 
 ---
 
 ## 2. Node and edge schema
 
-**Persisted and frozen.** Lives in `graph/archetypes.jac`, built in #1. Source of truth is
+**Persisted and frozen.** Lives in `graph.jac`, built in #1. Source of truth is
 `ARCHITECTURE.md` section 3; this is the wire-relevant subset.
 
 ```jac
@@ -148,7 +165,7 @@ set is a safety change, not a schema change.
 
 ## 3. Report objects
 
-**Transient, not frozen.** Lives in `graph/reports.jac`, built in #29. Safe to iterate; still needs
+**Transient, not frozen.** Lives in `graph.jac` alongside the archetypes, built in #29 by Bryan. Safe to iterate; still needs
 the `contract` label to change, because three tracks consume these.
 
 ```jac
@@ -232,7 +249,7 @@ walker logic to produce them.**
 
 **S8: page copy is template-or-quote. No `by llm()` on the read path, ever.**
 
-`render/templates.jac` maps `Concern.kind` → two format strings, `question` and `why`, with named
+The template registry in `main.jac` maps `Concern.kind` → two format strings, `question` and `why`, with named
 slots filled from the traversal. Every kind in section 3 must have an entry, or `Prepare` fails
 loudly rather than rendering an empty row.
 
@@ -267,7 +284,7 @@ A single config read at spawn. Both `by llm()` sites branch on it; nothing else 
 
 The concerns page needs no branch. It never calls a model.
 
-**Fixture keying:** `seed/patient.jac` owns the fixtures. Key on exact `Utterance.text`. If you add
+**Fixture keying:** the seed block in `write.jac` owns the fixtures. Key on exact `Utterance.text`. If you add
 a seeded utterance, add its fixture in the same PR.
 
 ---
@@ -293,5 +310,5 @@ the real implementation is a separate issue, and it must not change the shape.
 4. Change this file **and** every consumer in the same PR.
 5. Announce on merge.
 
-For `graph/archetypes.jac`, add: label `schema`, and tell everyone to reset their graph after
+For the nodes and edges in `graph.jac`, add: label `schema`, and tell everyone to reset their graph after
 pulling — an archetype change corrupts every existing persisted graph.
