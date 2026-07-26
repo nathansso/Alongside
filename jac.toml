@@ -1,0 +1,7 @@
+[project]
+name = "myCancerPal"
+version = "0.1.0"
+
+[jacpack]
+name = 'myCancerPal'
+description = 'Jac IDE snapshot for myCancerPal'
