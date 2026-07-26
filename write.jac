@@ -445,11 +445,60 @@ with entry {
 }
 // ===== END SEED =====
 
-// ===== REMEMBER walker — Issue #5, by llm() site #1. Not started. Blocked by #1, #2. =====
+// ===== REMEMBER walker — Issue #5, by llm() site #1 =====
 // walker Remember { has text: str; has role: str; has at: str; has out: Verdict = Verdict(); }
 // Writes Utterance (always) + Observation (if a symptom value) + extracted beliefs with
-// DerivedFrom/About. Severity typing is a provenance read off Utterance.role — never an
-// by llm() judgment.
+// DerivedFrom/About. Severity typing is a provenance read off Utterance.role — never a by llm()
+// judgment.
+//
+// The walker body is blocked by #1 (`Utterance`/`Observation`/`Belief`/`Anchor` +
+// `DerivedFrom`/`About` from graph.jac) and #29 (`Verdict` for `has out`). What has no graph
+// dependency — the `by llm()` #1 output schema, and the A1 guard that reads it — is below,
+// ready for the walker to call the moment #1 lands.
+//
+// **A1 boundary, made structural by this split:** the LLM's job stops at "what kind of
+// statement is this, and what free-text substance/metric did it name." It never decides whether
+// that name is real — `wr_check_extraction` re-resolves every name through VOCAB_ANCHORS
+// (INGEST, above) exactly like a regimen line. A name the LLM invents or mishears fails the same
+// lookup a real one passes; there is no code path where "the model was convincing" creates an
+// Anchor.
+
+obj ExtractedObservation {
+    has present: bool = False;   // does this check-in report a symptom value at all
+    has metric: str = "";        // free text, e.g. "nausea" — not yet vocabulary-checked
+    has value: float = 0.0;
+}
+
+obj ExtractedBelief {
+    has kind: str = "preference";  // "preference" | "constraint" — the LLM's read of statement type
+    has claim: str = "";           // normalized natural-language claim text
+    has substance: str = "";       // free-text substance name mentioned, "" if none
+    has polarity: float = 0.0;     // Preference.polarity; meaningful only when kind == "preference"
+}
+
+// `by llm()` #1 returns this. CLAUDE.md gotcha: `by llm()` returns an obj, never a node — the
+// walker copies these fields into real Utterance/Observation/Belief nodes once #1 exists.
+obj ExtractionResult {
+    has observation: ExtractedObservation = ExtractedObservation();
+    has beliefs: list[ExtractedBelief] = [];
+}
+
+// A1 guard, run once per extracted belief that names a substance. Reuses the same vocabulary
+// lookups as INGEST (wr_resolve_ingredient) so "my neighbor gave me St John's Wort" and a pasted
+// regimen line resolve identically — one vocabulary, two entry points.
+def:pub wr_check_extraction(belief: ExtractedBelief) -> dict {
+    if belief.substance == "" {
+        return {"needs_review": False, "anchor_key": ""};
+    }
+    key = wr_resolve_ingredient(belief.substance);
+    if key != "" {
+        return {"needs_review": False, "anchor_key": key};
+    }
+    // A1: no vocabulary match => no anchor, ever. The walker writes the Belief with
+    // needs_review = True and reports Concern(kind="unrecognized_substance") — never "safe"
+    // per S3, the page says "not in your record".
+    return {"needs_review": True, "anchor_key": ""};
+}
 // ===== END REMEMBER =====
 
 // ===== CONSOLIDATE walker — Issue #6, by llm() site #2 =====
@@ -464,6 +513,20 @@ with entry {
 // Rank: shared Anchor > reinforced this turn > cold (ARCHITECTURE.md §4). A pair carrying a
 // `last_examined` marker is skipped entirely — that's what makes next turn examine a different
 // slice instead of the same `budget` pairs every time.
+//
+// **Schema note (2026-07-26):** Nathan's #1 review flagged that `graph.jac` as drafted has
+// nowhere to persist "already examined" — `Conflicts` is only written when a pair conflicts, so
+// a satisfiable pair leaves no trace and gets re-examined every turn forever. He proposed either
+// `edge Examined: Belief --> Belief { has at: str; has conflicting: bool = False; }` or
+// `Belief.last_examined: str`. Either resolution is fine here: `wr_rank_conflict_candidates`
+// only reads `pair["last_examined"]` off whatever dict the walker builds — it doesn't care which
+// edge/field that value was read from once #1 lands.
+
+// `by llm()` #2 returns this — joint satisfiability of two natural-language constraints.
+obj SatisfiabilityResult {
+    has jointly_satisfiable: bool = True;  // False => the pair conflicts, walker writes Conflicts
+    has because: str = "";                 // reason string; empty only when jointly_satisfiable
+}
 
 def:pub wr_conflict_tier(pair: dict) -> int {
     if pair.get("shared_anchor", False) {
