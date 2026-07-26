@@ -15,7 +15,10 @@
 # Section order mirrors the merge order in CONTRACTS.md §1a: globs -> write walkers.
 
 import re;
-import from graph { Anchor, Member }
+import os;
+import from byllm.lib { MockLLM }
+import from graph { Anchor, Member, Utterance, Observation, Belief, Constraint, Verdict, Concern,
+                     DerivedFrom, About, Governs }
 
 # ===== VOCABULARY — Issue #2 =====
 #
@@ -361,7 +364,7 @@ def wr_parse_regimen(text: str) -> dict {
 # the text doesn't carry a comparable threshold — that's a timing instruction, or unstructured.
 def wr_parse_threshold(text: str) -> dict {
     m: any = re.search(
-        r"(?i)\b(fever|temperature|pain|nausea)\b.*?\b(?:over|above|greater than|>)\s*([\d.]+)",
+        r"(?i)\b(fever|temperature|pain|nausea)\b.*?\b(?:over|above|greater than|>)\s*(\d+(?:\.\d+)?)",
         text
     );
     if not m {
@@ -428,6 +431,71 @@ def wr_parse_instruction(text: str) -> dict {
     }
 
     return {"kind": "unstructured", "raw": text, "is_emergency": is_emergency};
+}
+
+# Ground-truth lookup by key. Anchors are never created here (A1) — wr_seed_vocabulary is the
+# only constructor. A miss returns None, same "no invented anchor" discipline as everywhere else.
+def wr_find_anchor(at_root: Root, key: str) -> Anchor | None {
+    anchors: list[Anchor] = [at_root -->][?:Anchor];
+    for a in anchors {
+        if a.key == key {
+            return a;
+        }
+    }
+    return None;
+}
+
+# Writes one Belief per recognized ingredient in a pasted regimen list, About the matching
+# vocabulary Anchor (must already exist — wr_seed_vocabulary runs first) and DerivedFrom the
+# source Utterance. A1: unrecognized lines are NOT written as Beliefs here — surfacing an
+# unrecognized substance as Concern(kind="unrecognized_substance") is read.jac's job; this
+# function only reports which raw lines need that treatment.
+def wr_write_regimen(at_root: Root, source: Utterance, regimen_text: str) -> dict {
+    parsed: dict = wr_parse_regimen(regimen_text);
+    written: list[Belief] = [];
+    parsed_anchors: list[dict] = list(parsed["anchors"]);
+    for a in parsed_anchors {
+        key: str = str(a["key"]);
+        anchor: Anchor | None = wr_find_anchor(at_root, key);
+        if anchor is not None {
+            b = (at_root ++> Belief(claim="on " + key))[0];
+            b +>:DerivedFrom():+> source;
+            b +>:About(weight=1.0):+> anchor;
+            written.append(b);
+        }
+    }
+    return {"written_count": len(written), "needs_review": parsed["needs_review"]};
+}
+
+# Writes a Constraint for one parsed threshold instruction, Governs the named symptom Anchor,
+# DerivedFrom the source Utterance. Severity typing is the provenance read from CONTRACTS.md §2:
+# hard is True only if source.role is oncologist/pharmacist/label — never a by llm() judgment.
+# Returns None for timing/unstructured instructions or an unresolved metric — nothing invented.
+def wr_write_instruction(at_root: Root, source: Utterance, instruction_text: str) -> Constraint | None {
+    parsed: dict = wr_parse_instruction(instruction_text);
+    if str(parsed["kind"]) != "threshold" {
+        return None;
+    }
+    anchor_key: str = str(parsed["anchor_key"]);
+    if anchor_key == "" {
+        return None;
+    }
+    anchor: Anchor | None = wr_find_anchor(at_root, anchor_key);
+    if anchor is None {
+        return None;
+    }
+    hard: bool = source.role == "oncologist" or source.role == "pharmacist" or source.role == "label";
+    c = (at_root ++> Constraint(
+        claim=instruction_text,
+        hard=hard,
+        emergency=bool(parsed["is_emergency"]),
+        threshold_level=float(str(parsed["threshold"])),
+        threshold_days=0,
+        threshold_metric=anchor_key
+    ))[0];
+    c +>:DerivedFrom():+> source;
+    c +>:Governs():+> anchor;
+    return c;
 }
 # ===== END INGEST =====
 
@@ -497,11 +565,6 @@ with entry {
 # DerivedFrom/About. Severity typing is a provenance read off Utterance.role — never a by llm()
 # judgment.
 #
-# The walker body is blocked by #1 (`Utterance`/`Observation`/`Belief`/`Anchor` +
-# `DerivedFrom`/`About` from graph.jac) and #29 (`Verdict` for `has out`). What has no graph
-# dependency — the `by llm()` #1 output schema, and the A1 guard that reads it — is below,
-# ready for the walker to call the moment #1 lands.
-#
 # **A1 boundary, made structural by this split:** the LLM's job stops at "what kind of
 # statement is this, and what free-text substance/metric did it name." It never decides whether
 # that name is real — `wr_check_extraction` re-resolves every name through VOCAB_ANCHORS
@@ -529,14 +592,35 @@ obj ExtractionResult {
     has beliefs: list[ExtractedBelief] = [];
 }
 
+# A substance a patient mentions in free text can be a medication OR a food (grapefruit is the
+# canonical case — ARCHITECTURE.md §3's own example). wr_resolve_ingredient alone is too narrow
+# for extraction, unlike regimen parsing where only actual medication lines are expected.
+def wr_resolve_substance(raw: str) -> str {
+    ingredient_key: str = wr_resolve_ingredient(raw);
+    if ingredient_key != "" {
+        return ingredient_key;
+    }
+    name: str = wr_strip_dose(raw).lower();
+    known_foods: list[str] = [];
+    for a in VOCAB_ANCHORS {
+        if a["kind"] == "food" {
+            known_foods.append(str(a["key"]));
+        }
+    }
+    if name in known_foods {
+        return name;
+    }
+    return "";
+}
+
 # A1 guard, run once per extracted belief that names a substance. Reuses the same vocabulary
-# lookups as INGEST (wr_resolve_ingredient) so "my neighbor gave me St John's Wort" and a pasted
-# regimen line resolve identically — one vocabulary, two entry points.
+# lookup as INGEST so "my neighbor gave me St John's Wort" and a pasted regimen line resolve
+# identically — one vocabulary, two entry points.
 def wr_check_extraction(belief: ExtractedBelief) -> dict {
     if belief.substance == "" {
         return {"needs_review": False, "anchor_key": ""};
     }
-    key: str = wr_resolve_ingredient(belief.substance);
+    key: str = wr_resolve_substance(belief.substance);
     if key != "" {
         return {"needs_review": False, "anchor_key": key};
     }
@@ -544,6 +628,142 @@ def wr_check_extraction(belief: ExtractedBelief) -> dict {
     # needs_review = True and reports Concern(kind="unrecognized_substance") — never "safe"
     # per S3, the page says "not in your record".
     return {"needs_review": True, "anchor_key": ""};
+}
+
+# MockLLM-first per Nathan's #27 findings: no provider key exists in this environment and
+# platform credits don't cover app-level by llm() calls, so DEMO_MODE isn't a later convenience
+# here — it's the only path that runs at all right now. This glob is the plumbing proof (spike/
+# graph.jac's exact pattern); real per-utterance DEMO_MODE fixtures are #25, keyed off
+# SEED_CHECKINS text, once this shape is confirmed against a live provider.
+glob llm = MockLLM(
+    model_name="mockllm",
+    config={"outputs": [ExtractionResult(
+        observation=ExtractedObservation(present=True, metric="nausea", value=1.0),
+        beliefs=[
+            ExtractedBelief(kind="preference", claim="mentioned nausea", substance="", polarity=0.0),
+            ExtractedBelief(kind="constraint", claim="my neighbor gave me a herbal remedy", substance="herbal remedy", polarity=0.0),
+        ]
+    )]}
+);
+
+def wr_extract(text: str) -> ExtractionResult by llm();
+sem wr_extract = "Extract a typed belief and, if present, a symptom observation from the patient's free-text check-in. Identify any medication or supplement name mentioned verbatim, even if unfamiliar, as ExtractedBelief.substance.";
+sem wr_extract.text = "The patient's raw check-in sentence.";
+
+# DEMO_MODE fixtures (#25) — keyed on exact Utterance.text (CONTRACTS.md §6), hand-built for the
+# SEED_CHECKINS corpus. An if/elif chain rather than a dict[str, ExtractionResult] glob: explicit
+# over clever, and it keeps every fixture next to the exact string it keys on for easy review.
+# Anything outside SEED_CHECKINS falls through to an empty ExtractionResult — no observation, no
+# beliefs — which is the honest "nothing extracted" answer, not a guess.
+def wr_demo_extract(text: str) -> ExtractionResult {
+    if text == "Take Gleevec at the same time every day, and call the clinic immediately if your temperature goes over 100.4." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="preference", claim="on Gleevec", substance="Gleevec", polarity=0.0)]);
+    }
+    if text == "Take Zofran within 30 minutes before food if the nausea is bad." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="preference", claim="on Zofran", substance="Zofran", polarity=0.0)]);
+    }
+    if text == "Also take docusate daily for constipation prevention." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="preference", claim="on docusate", substance="docusate", polarity=0.0)]);
+    }
+    if text == "Started the new medication today, feeling okay so far." {
+        return ExtractionResult();
+    }
+    if text == "Some nausea after breakfast, took the Zofran like they said." {
+        return ExtractionResult(
+            observation=ExtractedObservation(present=True, metric="nausea", value=1.0),
+            beliefs=[ExtractedBelief(kind="preference", claim="took Zofran", substance="Zofran", polarity=0.0)]
+        );
+    }
+    if text == "Nausea again this morning, not too bad." {
+        return ExtractionResult(observation=ExtractedObservation(present=True, metric="nausea", value=0.5));
+    }
+    if text == "Feeling okay, no complaints today." {
+        return ExtractionResult();
+    }
+    if text == "Went to urgent care for a sinus infection and started Levaquin." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="constraint", claim="started Levaquin for a sinus infection", substance="Levaquin", polarity=0.0)]);
+    }
+    if text == "Some loose stools the last couple days, not sure why." {
+        return ExtractionResult(observation=ExtractedObservation(present=True, metric="diarrhea", value=1.0));
+    }
+    if text == "Skipped my Gleevec refill this week, it's expensive and I couldn't get to the pharmacy in time." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="constraint", claim="skipped Gleevec refill due to cost", substance="Gleevec", polarity=0.0)]);
+    }
+    if text == "Still feeling tired but otherwise okay." {
+        return ExtractionResult();
+    }
+    if text == "Finished the antibiotic course, sinus infection cleared up." {
+        return ExtractionResult();
+    }
+    return ExtractionResult();
+}
+
+walker:pub Remember {
+    has text: str;
+    has role: str;
+    has at: str;
+    has out: Verdict = Verdict();
+
+    can go with Root entry {
+        utt = (here ++> Utterance(text=self.text, at=self.at, role=self.role))[0];
+
+        # Deterministic instruction parsing runs regardless of by llm() extraction — threshold
+        # evaluation must never depend on a model (ARCHITECTURE.md §8's "seven places that must
+        # not have one"). A miss here is silent: most check-ins carry no instruction at all.
+        wr_write_instruction(here, utt, self.text);
+
+        # DEMO_MODE read INSIDE the ability, never as a module-level glob — jachammer globs
+        # evaluate once at boot and would miss a later change (Nathan's #27 finding, flagged for
+        # this file by name). No live provider key exists yet either way (#27), so this is the
+        # only path that runs right now regardless of the flag.
+        extraction: ExtractionResult = ExtractionResult();
+        if os.getenv("DEMO_MODE") {
+            extraction = wr_demo_extract(self.text);
+        } else {
+            extraction = wr_extract(self.text);
+        }
+
+        if extraction.observation.present {
+            obs = (here ++> Observation(
+                metric=extraction.observation.metric,
+                value=extraction.observation.value,
+                at=self.at
+            ))[0];
+            obs +>:DerivedFrom():+> utt;
+        }
+
+        for belief in extraction.beliefs {
+            guard: dict = wr_check_extraction(belief);
+            needs_review: bool = bool(guard["needs_review"]);
+            anchor_key: str = str(guard["anchor_key"]);
+
+            b = (here ++> Belief(claim=belief.claim, needs_review=needs_review))[0];
+            b +>:DerivedFrom():+> utt;
+
+            if anchor_key != "" {
+                anchor: Anchor | None = wr_find_anchor(here, anchor_key);
+                if anchor is not None {
+                    b +>:About(weight=1.0):+> anchor;
+                }
+            }
+
+            # A9: Remember never reinforces — no strength/uses/last_used write, here or anywhere
+            # else in this ability.
+            if needs_review {
+                self.out.concerns.append(Concern(
+                    kind="unrecognized_substance",
+                    anchor=belief.substance,
+                    evidence=[jid(utt)],
+                    since=self.at,
+                    action="mention"
+                ));
+            }
+        }
+    }
+
+    can emit with Root exit {
+        report self.out;               # one typed object, once, from Root exit (CONTRACTS §4)
+    }
 }
 # ===== END REMEMBER =====
 
