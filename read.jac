@@ -4,18 +4,24 @@
 # `main.jac` exist. Every private helper is prefixed `rd_` (discipline 1) so the collapse into
 # `main.jac` at submission is a concatenation with no rename.
 #
-# Contents today: `Recall` channel B (#8). Channel A (#15), the four detection mechanisms
-# (#10–#12), corroboration (#13), `Vigil` (#21), and `Investigate` (#14) land in later issues.
+# Contents today: `Recall` channel B (#8), the emergency bypass (#9), and detection mechanism 1
+# (#10). Channel A (#15), mechanisms 2–4 (#11, #12), corroboration (#13), `Vigil` (#21), and
+# `Investigate` (#14) land in later issues.
 #
 # INVARIANTS THIS FILE IS ACCOUNTABLE FOR
 #   A2  channel B is unscored, unpruned, and exempt from beam, budget, decay, and waterline.
 #       The ONLY thing that kills a channel B constraint is `Supersedes`.
 #   A3  the model never selects a traversal path. There is no `by llm()` in this file and no
-#       `visit ... by llm()`. Anchor resolution at `Root` is a deterministic key match.
+#       `visit ... by llm()`. Anchor resolution at `Root` is a deterministic key match, and the
+#       emergency criterion is arithmetic over parsed values (ARCHITECTURE §8, "seven places").
 #   A9  only `Recall` reinforces — and not yet. Reinforcement arrives with channel A in #15.
 #       Nothing below writes to the graph.
 #   S2  every `Violation` carries a non-empty `source` and `at` read off `DerivedFrom`.
 #       `obj Violation` has no defaults, so this is structural, not a runtime check.
+#   S5  emergency criteria are evaluated BEFORE scoring, drafting, or beam. Implemented as
+#       ability declaration order — see the warning on `rd_emergency`.
+#   S6  mechanism 1 emits at `ask` and never above. `escalate` is reachable from exactly one
+#       place in this file, `rd_emergency`.
 #
 # `Recall` contains no `while` loop. Policy lives on node-type abilities and the visit queue.
 
@@ -23,8 +29,8 @@
 # below infers `any` — and because the locals here are annotated, that surfaces as five E1001s
 # instead of passing `jac check` and dying at the first field read. Import the edges you traverse.
 import from graph {
-    Anchor, Belief, Constraint, Utterance, Verdict, Violation,
-    DerivedFrom, Governs, Excludes, Member, Supersedes
+    Anchor, Belief, Concern, Constraint, Observation, Preference, Utterance, Verdict, Violation,
+    About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
 }
 
 
@@ -69,6 +75,254 @@ def rd_exclusion_reason(c: Constraint, a: Anchor) -> str {
 }
 
 
+# Every `Observation` on `a` that satisfies `c`'s PARSED threshold (#9). Pure arithmetic over
+# fields #4 wrote — ARCHITECTURE §8 lists threshold evaluation among the seven places that must
+# never hold a `by llm()`, and this is that place.
+#
+# `threshold_metric == ""` means the criterion carries no numeric metric ("call if you get a
+# rash"); the qualifying condition is then simply that the symptom was reported at all.
+def rd_crossings(c: Constraint, a: Anchor) -> list[Observation] {
+    hits: list[Observation] = [];
+    for o in [a <-:Reports:<-] {
+        if (c.threshold_metric != "") and (o.metric != c.threshold_metric) {
+            continue;
+        }
+        if o.value < c.threshold_level {
+            continue;
+        }
+        # NOT REDUNDANT, and dropping it is a real defect. An emergency constraint whose
+        # `threshold_level` is 0.0 — unparsed, or a criterion with no numeric threshold — makes the
+        # comparison above true for EVERY observation on the anchor, `value == 0.0` included. On
+        # both pinned scales (`patient_selfreport` 0–10, `ctcae_grade` 0–4) zero means the symptom
+        # is ABSENT. Without this line, logging "no fever today" raises a full-screen
+        # "contact your care team now" — the check-in reporting good news fires the alarm.
+        if o.value <= 0.0 {
+            continue;
+        }
+        hits.append(o);
+    }
+    return hits;
+}
+
+
+# Distinct observation dates, ascending. `threshold_days` is D days at/above L, so the crossing
+# test counts DAYS, not observations — three readings on one afternoon are one day.
+def rd_distinct_dates(obs: list[Observation]) -> list[str] {
+    dates: list[str] = [];
+    for o in obs {
+        if o.at not in dates {
+            dates.append(o.at);
+        }
+    }
+    return sorted(dates);
+}
+
+
+# ==========================================================================================
+# Mechanism 1 helpers (#10) — active regimen, `Member` reads, the triangle
+# ==========================================================================================
+
+# The un-superseded REGIMEN beliefs about an anchor. `graph.jac` defines "active regimen" by
+# traversal and by no field: an anchor is active regimen iff an un-superseded regimen `Belief`
+# points at it over `About`. Discontinuation is `Supersedes` — the same carve-out A2 grants
+# channel B, and for the same reason.
+#
+# NOTHING MARKS A BELIEF AS A REGIMEN BELIEF, so the discriminator is EXACT TYPE: a plain
+# `Belief`, with the `Preference` and `Constraint` subclasses excluded. Verified on a spike —
+# `[a <-:About:<-]` returns subclass instances too, all three of three. Without the `isinstance`
+# filter, "grapefruit made me nauseous" (a `Preference`) and "avoid grapefruit" (a `Constraint`)
+# each make grapefruit part of the patient's active regimen, and mechanism 1 starts reporting
+# interactions between two things nobody is taking.
+def rd_regimen_beliefs(a: Anchor) -> list[Belief] {
+    out: list[Belief] = [];
+    for b in [a <-:About:<-] {
+        if isinstance(b, Constraint) or isinstance(b, Preference) {
+            continue;
+        }
+        sup: list[Belief] = [b <-:Supersedes:<-];
+        if len(sup) > 0 {
+            continue;
+        }
+        out.append(b);
+    }
+    return out;
+}
+
+
+def rd_is_regimen(a: Anchor) -> bool {
+    bs: list[Belief] = rd_regimen_beliefs(a);
+    return len(bs) > 0;
+}
+
+
+# The `Utterance` behind an anchor's active-regimen belief, as a 0-or-1 list. Its `.role` is the
+# PRESCRIBER and its `.at` is the REGIMEN DATE (graph.jac's definition, verbatim) — which is what
+# lets an `additive_toxicity` concern name two prescribers and two dates without inventing either.
+#
+# Most recent wins, matching `rd_latest_source`: a regimen restated at a later visit is best cited
+# to the restatement. An empty return on an anchor where `rd_is_regimen` is true is the S2 case —
+# active regimen, no citation — and the caller records it rather than fabricating a concern.
+def rd_regimen_source(a: Anchor) -> list[Utterance] {
+    best: list[Utterance] = [];
+    for b in rd_regimen_beliefs(a) {
+        src: list[Utterance] = rd_latest_source(b);
+        if len(src) == 0 {
+            continue;
+        }
+        if (len(best) == 0) or (src[0].at >= best[0].at) {
+            best = src;
+        }
+    }
+    return best;
+}
+
+
+# `Member` reads, filtered by `via`. Read PER PAIR — `[edge a ->:Member:->]` zipped against the
+# node list by position mispairs an anchor that is a member of two things, which every ingredient
+# in the vocabulary eventually is.
+#
+# These READ `Member`; they do not `visit` it. That distinction is the whole answer to the
+# direction question raised in `write.jac` lines 28-35 — see the note on `rd_anchor`'s expansion.
+def rd_member_up(a: Anchor, via: str) -> list[Anchor] {
+    out: list[Anchor] = [];
+    for x in [a ->:Member:->] {
+        for e in [edge a ->:Member:-> x] {
+            if e.via == via {
+                out.append(x);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+
+def rd_member_down(a: Anchor, via: str) -> list[Anchor] {
+    out: list[Anchor] = [];
+    for x in [a <-:Member:<-] {
+        for e in [edge x ->:Member:-> a] {
+            if e.via == via {
+                out.append(x);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+
+# Every `ingredient` anchor whose toxicity converges on `sym`.
+#
+# TWO HOPS IN THE DATA, ONE HOP IN THE DOC. ARCHITECTURE §7 gives the signature as
+# `ingredient --toxicity_of--> symptom`, and NO SUCH EDGE EXISTS in the vocabulary. `write.jac`'s
+# `VOCAB_MEMBERS` wires the demo triangle as
+#     ondansetron  --class_member--> QT-prolonging --toxicity_of--> qt_prolongation
+#     levofloxacin --class_member--> QT-prolonging
+# so implementing the doc literally finds nothing on the seeded graph. Both shapes are accepted:
+# the tail of the `toxicity_of` edge counts if it is an ingredient itself, and so do its
+# `class_member` members if it is a class. Three lines, and the rule survives whichever of the two
+# gets corrected.
+def rd_toxicity_contributors(sym: Anchor) -> list[Anchor] {
+    out: list[Anchor] = [];
+    keys: list[str] = [];
+    for tail in rd_member_down(sym, "toxicity_of") {
+        cands: list[Anchor] = [tail];
+        for m in rd_member_down(tail, "class_member") {
+            cands.append(m);
+        }
+        for cnd in cands {
+            # `ingredient` only. `food` is deliberately not a contributor: grapefruit is not
+            # prescribed, so there is no second prescriber and no "nobody compared them" — the
+            # grapefruit path is an interaction, which is the other half of this mechanism.
+            if cnd.kind != "ingredient" {
+                continue;
+            }
+            if cnd.key in keys {
+                continue;
+            }
+            keys.append(cnd.key);
+            out.append(cnd);
+        }
+    }
+    return out;
+}
+
+
+# Un-superseded constraints reaching an anchor by EITHER `Governs` or `Excludes`.
+#
+# Both, deliberately. `write.jac` says the `INTERACTION_TABLE` pair
+# (`CYP3A4-inducer`, `CYP3A4-substrate`) is wired into a `Constraint` by #4/#7 once the regimen
+# contains both sides; the natural wiring is one constraint that `Excludes` the inducer and
+# `Governs` the substrate. Scanning only `Excludes` finds that pair from St John's Wort and misses
+# it entirely from imatinib.
+def rd_touching_constraints(a: Anchor) -> list[Constraint] {
+    out: list[Constraint] = [];
+    seen: list[str] = [];
+    cands: list[Constraint] = [a <-:Governs:<-];
+    for c in [a <-:Excludes:<-] {
+        cands.append(c);
+    }
+    for c in cands {
+        cid: str = jid(c);
+        if cid in seen {
+            continue;
+        }
+        seen.append(cid);
+        sup: list[Belief] = [c <-:Supersedes:<-];
+        if len(sup) > 0 {
+            continue;
+        }
+        out.append(c);
+    }
+    return out;
+}
+
+
+# An anchor together with the classes it is a `class_member` of. One hop — the vocabulary needs
+# exactly one, and an unbounded climb would let a constraint on a distant superclass bind
+# everything beneath it.
+def rd_self_and_classes(a: Anchor) -> list[Anchor] {
+    out: list[Anchor] = [a];
+    for g in rd_member_up(a, "class_member") {
+        out.append(g);
+    }
+    return out;
+}
+
+
+# The OTHER side of a constraint, expanded down to concrete substances: every anchor `c` touches
+# except `x`, plus the `class_member` members of each, kept if it is a substance the patient could
+# actually be taking.
+def rd_partner_candidates(c: Constraint, x: Anchor) -> list[Anchor] {
+    out: list[Anchor] = [];
+    keys: list[str] = [];
+    ys: list[Anchor] = [c ->:Governs:->];
+    for y in [c ->:Excludes:->] {
+        ys.append(y);
+    }
+    for y in ys {
+        if y.key == x.key {
+            continue;
+        }
+        cands: list[Anchor] = [y];
+        for m in rd_member_down(y, "class_member") {
+            cands.append(m);
+        }
+        for cnd in cands {
+            if cnd.kind not in ["ingredient", "food"] {
+                continue;
+            }
+            if cnd.key in keys {
+                continue;
+            }
+            keys.append(cnd.key);
+            out.append(cnd);
+        }
+    }
+    return out;
+}
+
+
 # ==========================================================================================
 # `Recall` — channel B, the exhaustive constraint traversal (#8)
 # ==========================================================================================
@@ -103,6 +357,123 @@ walker:pub Recall {
 
     # `allowed` is false iff channel B hit a `Constraint` with `hard == True` (CONTRACTS §3).
     has rd_hard_hit: bool = False;
+
+    # One emergency `Concern` per (constraint, anchor) that crosses; a constraint governing two
+    # crossed anchors is two criteria, not one duplicate.
+    has rd_seen_emergencies: list[str] = [];
+
+    # Mechanism 1 (#10) dedupe, keyed by kind + the UNORDERED pair (+ the constraint, for
+    # `interaction`). Unordered on purpose: the triangle is reachable from either arm and the
+    # curated pair from either side, and both must yield the same single concern.
+    has rd_seen_pairs: list[str] = [];
+
+    # ============ S5: THE EMERGENCY BYPASS. THIS ABILITY MUST STAY FIRST. ================
+    #
+    # Two `with Root entry` abilities on one walker BOTH fire, in DECLARATION ORDER — verified on
+    # a spike, not read from docs. `disengage` here suppresses `rd_start` AND `rd_finish`, so on
+    # the escalate path nothing else in this walker executes and exactly one report is emitted.
+    #
+    # That is S5 expressed as structure rather than as a flag the rest of the walker agrees to
+    # respect: "evaluated before scoring, drafting, or beam" is true because THE REST NEVER RUNS.
+    #
+    # THE COST: declaration order is load-bearing and invisible. Move this below `rd_start` and S5
+    # breaks silently — `jac check` sees nothing and every other test still passes. The test
+    # `channel_b_does_not_run_on_the_escalate_path` is the only thing standing between a future
+    # refactor and a silent S5 violation. Do not delete it, and do not reorder these abilities.
+    can rd_emergency with Root entry {
+        # Scanned at root and deliberately NOT filtered by `self.anchors`. Febrile neutropenia is
+        # an emergency whether or not the patient thought to ask about fever; scoping the scan to
+        # the query would make the interstitial depend on the patient already suspecting the
+        # thing, which is the failure this mechanism exists to prevent. Depth 1 from root, same
+        # assumption as `rd_start` and `main.jac`'s `pg_status` — flagged to #5.
+        cons: list[Constraint] = [here -->[?:Constraint]];
+
+        for c in cons {
+            # `emergency` is PARSED by #4 from the patient's own instructions and never inferred.
+            if not c.emergency {
+                continue;
+            }
+            # A2's one carve-out, and it matters more here than anywhere: a retracted emergency
+            # instruction that keeps firing is an interstitial nobody can turn off.
+            superseders: list[Belief] = [c <-:Supersedes:<-];
+            if len(superseders) > 0 {
+                continue;
+            }
+
+            # An emergency criterion is a `Governs` relationship, but `Excludes` is scanned too —
+            # it costs nothing, and a malformed emergency constraint should not silently fail.
+            targets: list[Anchor] = [c ->:Governs:->];
+            for x in [c ->:Excludes:->] {
+                targets.append(x);
+            }
+
+            for a in targets {
+                hits: list[Observation] = rd_crossings(c, a);
+                dates: list[str] = rd_distinct_dates(hits);
+                # `threshold_days` honored where parsed; the emergency case is 0, because a single
+                # crossing IS the emergency. The D-day persistence window belongs to #12.
+                need: int = c.threshold_days if c.threshold_days > 1 else 1;
+                if len(dates) < need {
+                    continue;
+                }
+
+                pair: str = jid(c) + "|" + a.key;
+                if pair in self.rd_seen_emergencies {
+                    continue;
+                }
+                self.rd_seen_emergencies.append(pair);
+
+                # The emergency hit IS a channel B hit — S6 makes escalate channel-B-only — so
+                # CONTRACTS §3 applies unchanged. Set before the citation check, as in #8.
+                if c.hard {
+                    self.rd_hard_hit = True;
+                }
+
+                cite: list[Utterance] = rd_latest_source(c);
+                if len(cite) == 0 {
+                    # #8 has this hole for a page row. Here it drops a FULL-SCREEN EMERGENCY:
+                    # no `Citation` -> `pg_row` returns None -> the interstitial never renders,
+                    # with no error. Raised on #5 as the highest-value write-time assert we have.
+                    self.rd_notes.append(
+                        "uncitable emergency constraint (no DerivedFrom): " + c.claim
+                    );
+                    continue;
+                }
+
+                # ORDER IS LOAD-BEARING. `pg_slots` fills `{criterion}` from `utts[0].text` and
+                # `{source}` from `utts[0].role`, and those are the only two slots the `emergency`
+                # template has — so the interstitial's headline is the clinician's own sentence,
+                # verbatim. S8 satisfied by quotation, which is its stronger half. Observations
+                # follow, feeding the "what I've noticed" dates.
+                ev: list[str] = [jid(cite[0])];
+                for o in hits {
+                    ev.append(jid(o));
+                }
+
+                self.out.concerns.append(
+                    Concern(
+                        kind="emergency",
+                        anchor=a.key,
+                        evidence=ev,
+                        since=dates[0],
+                        action="escalate"
+                    )
+                );
+            }
+        }
+
+        # Gated on a RENDERABLE emergency, not on `rd_hard_hit`. If the criterion was met but the
+        # constraint is uncitable, disengaging would return a blocked verdict with nothing in it —
+        # no interstitial, no rows, no explanation. Falling through to channel B is strictly more
+        # information for the patient, and `rd_notes` still carries the emergency for #16.
+        if len(self.out.concerns) > 0 {
+            # `rd_finish` never fires after `disengage`, so `allowed` is assembled and reported
+            # here. Still exactly one report.
+            self.out.allowed = not self.rd_hard_hit;
+            report self.out;
+            disengage;
+        }
+    }
 
     # --- Root entry: deterministic anchor resolution, no model (A3) ----------------------
     can rd_start with Root entry {
@@ -169,7 +540,146 @@ walker:pub Recall {
         # it in REVERSE would make a constraint on one class bind every sibling ingredient in it,
         # turning "no grapefruit" into "no CYP3A4 inhibitors". That is over-blocking on a safety
         # walker, and it is not what reaches the seeded constraint two hops out.
+        #
+        # `write.jac` lines 28-35 ask read.jac to read `Member` as UNDIRECTED or "this traversal
+        # breaks", which reads as a contradiction and is not one. The split #10 makes explicit:
+        #   EXPANSION (`visit`) stays forward-only — reverse expansion is the over-blocking above.
+        #   DETECTION reads `Member` backwards as a LOCAL structural read, no `visit`
+        #     (`rd_member_down`). Finding the second arm of a triangle is not walking through it.
+        # Mechanism 1 is the case that note is about, and it is served by the reverse read alone.
         visit [here ->:Member:->];
+
+        # ===== MECHANISM 1 (#10) — a path exists that should not =========================
+        # Structural, unscored, ceiling `ask` (CONTRACTS §3) — never `escalate`, which S6 reserves
+        # for `rd_emergency`. Runs after the `visit`s only for reading order; `visit` queues rather
+        # than recurses, so nothing below depends on it.
+        #
+        # ONCE PER ANCHOR. The `rd_seen_anchors` guard at the top of this ability is what makes
+        # the shared symptom of a triangle processed a single time no matter how many arms of it
+        # the traversal arrived on.
+
+        # --- additive toxicity: the triangle, and the headline detection -----------------
+        # Two prescribers, one shared toxicity, nobody compared them because nobody was in both
+        # rooms. Gated on `symptom`: `CYP3A4-inhibitor --toxicity_of--> CYP3A4-substrate` converges
+        # on a CLASS, and two drugs meeting there is an interaction, not a shared toxicity.
+        if here.kind == "symptom" {
+            actives: list[Anchor] = [];
+            srcs: list[Utterance] = [];
+            for cnd in rd_toxicity_contributors(here) {
+                u: list[Utterance] = rd_regimen_source(cnd);
+                if len(u) == 0 {
+                    # Distinguish "not on the regimen" (silent, correct) from "on the regimen but
+                    # uncitable" (S2 — recorded, never fabricated into a concern). Same handling
+                    # as #8's uncitable constraint; same ask on #5.
+                    if rd_is_regimen(cnd) {
+                        self.rd_notes.append(
+                            "uncitable regimen belief (no DerivedFrom): " + cnd.key
+                        );
+                    }
+                    continue;
+                }
+                actives.append(cnd);
+                srcs.append(u[0]);
+            }
+
+            n: int = len(actives);
+            for i in range(n) {
+                for j in range(i + 1, n) {
+                    # Order the pair by (regimen date, key). `pg_slots` reads `{role_a}`/`{at_a}`
+                    # off `utts[0]` and `{role_b}`/`{at_b}` off `utts[1]`, so EVIDENCE ORDER IS
+                    # LOAD-BEARING: evidence[0] is the earlier prescription, and the row reads
+                    # chronologically. Asserted in the annex, not left to insertion order.
+                    ka: str = srcs[i].at + "|" + actives[i].key;
+                    kb: str = srcs[j].at + "|" + actives[j].key;
+                    swap: bool = kb < ka;
+                    lo: int = j if swap else i;
+                    hi: int = i if swap else j;
+
+                    two: list[str] = sorted([actives[i].key, actives[j].key]);
+                    pk: str = "tox|" + here.key + "|" + two[0] + "|" + two[1];
+                    if pk in self.rd_seen_pairs {
+                        continue;
+                    }
+                    self.rd_seen_pairs.append(pk);
+
+                    self.out.concerns.append(
+                        Concern(
+                            kind="additive_toxicity",
+                            anchor=here.key,
+                            evidence=[jid(srcs[lo]), jid(srcs[hi])],
+                            # The LATER date. The convergence begins when the second drug lands;
+                            # the first one on its own was never a concern, and dating the row to
+                            # it would overstate how long this has been true.
+                            since=srcs[hi].at,
+                            action="ask"
+                        )
+                    );
+                }
+            }
+        }
+
+        # --- interaction: a curated pair with both sides on board ------------------------
+        # Table stakes — a dictionary lookup does it (ARCHITECTURE §7). Built, never led with.
+        if here.kind in ["ingredient", "food"] {
+            mine: list[Utterance] = rd_regimen_source(here);
+            if len(mine) > 0 {
+                for x in rd_self_and_classes(here) {
+                    for c in rd_touching_constraints(x) {
+                        for r in rd_partner_candidates(c, x) {
+                            if r.key == here.key {
+                                continue;
+                            }
+                            rs: list[Utterance] = rd_regimen_source(r);
+                            if len(rs) == 0 {
+                                continue;
+                            }
+
+                            # `{new}` is the LATER-PRESCRIBED side — "{regimen_drug} is already on
+                            # my list; {new} was added". Decided structurally from the two regimen
+                            # dates, which needs no clock: `Recall` has no `today` (CONTRACTS §4),
+                            # the same gap flagged on #9. Key breaks a same-day tie so the answer
+                            # is deterministic, and computing it from the pair rather than from
+                            # `here` is what makes both arrival directions agree.
+                            mk: str = mine[0].at + "|" + here.key;
+                            rk: str = rs[0].at + "|" + r.key;
+                            newer: bool = rk > mk;
+                            new_key: str = r.key if newer else here.key;
+                            new_src: Utterance = rs[0] if newer else mine[0];
+
+                            two: list[str] = sorted([here.key, r.key]);
+                            pk: str = "int|" + two[0] + "|" + two[1] + "|" + jid(c);
+                            if pk in self.rd_seen_pairs {
+                                continue;
+                            }
+                            self.rd_seen_pairs.append(pk);
+
+                            cite: list[Utterance] = rd_latest_source(c);
+                            if len(cite) == 0 {
+                                self.rd_notes.append(
+                                    "uncitable interaction constraint (no DerivedFrom): "
+                                    + c.claim
+                                );
+                                continue;
+                            }
+
+                            # evidence[0] is the NEW substance's own utterance: `pg_slots` fills
+                            # `{role}`/`{at}` from `utts[0]`, and the template says
+                            # "{new} was added ({role}, {at})". The constraint's citation follows,
+                            # carrying the label provenance.
+                            self.out.concerns.append(
+                                Concern(
+                                    kind="interaction",
+                                    anchor=new_key,
+                                    evidence=[jid(new_src), jid(cite[0])],
+                                    since=new_src.at,
+                                    action="ask"
+                                )
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     # --- Constraint entry: Supersedes is the only killer (A2) ----------------------------
