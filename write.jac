@@ -14,6 +14,8 @@
 //
 // Section order mirrors the merge order in CONTRACTS.md §1a: globs -> write walkers.
 
+import re;
+
 // ===== VOCABULARY — Issue #2 =====
 //
 // A1 is the whole point of this file: the vocabulary decides what exists. Nothing outside
@@ -79,6 +81,8 @@ glob VOCAB_ANCHORS: list[dict] = [
     {"key": "nausea",                "kind": "symptom"},  // CTCAE: nausea
     {"key": "peripheral_neuropathy", "kind": "symptom"},  // CTCAE: peripheral sensory neuropathy
     {"key": "diarrhea",              "kind": "symptom"},  // CTCAE: diarrhea
+    {"key": "fever",                 "kind": "symptom"},  // #4: the canonical "call if fever over
+                                                            // 100.4" neutropenic-fever instruction
 
     // food — small closed set (ARCHITECTURE.md §3)
     {"key": "grapefruit", "kind": "food"},
@@ -211,9 +215,173 @@ with entry {
 }
 // ===== END INTERACTION TABLE =====
 
-// ===== INGEST — Issue #4, not started. Blocked by #1, #2. =====
-// Deterministic regimen parse: pasted med list -> ingredient anchors. Zero anchors created
-// outside VOCAB_ANCHORS (A1): a miss writes needs_review = True and creates no anchor.
+// ===== INGEST — Issue #4 =====
+//
+// Deterministic regimen and instruction parsing. **No `by llm()` anywhere in this section, per
+// A1** — brand -> ingredient is a vocabulary lookup, never a guess, and threshold/timing values
+// are parsed, never recalled by a model (ARCHITECTURE.md §8's "seven places that must not have
+// one": anchor resolution, threshold evaluation).
+//
+// Same stub-first deferral as VOCABULARY/INTERACTION TABLE: these functions return plain dicts,
+// not `Anchor(...)` / `Constraint(...)` / `Governs(...)`. Wiring parsed output into real nodes
+// and edges — including the severity-typing rule (`Constraint.hard` from `Utterance.role`) — is
+// a follow-up once graph.jac (#1) lands; that rule needs a live `Utterance`, which doesn't exist
+// until #5 (`Remember`) writes one.
+//
+// The emergency flag is *set* here, from parsed text, per #4's acceptance. It is *evaluated* in
+// `Recall` (read.jac, Nathan's file, S5) before scoring or drafting anything — this file only
+// produces the flag, never acts on it.
+
+glob BRAND_ALIASES: dict[str, str] = {
+    "gleevec": "imatinib",
+    "zofran": "ondansetron",
+    "levaquin": "levofloxacin",
+    "aleve": "naproxen",
+    "advil": "ibuprofen",
+    "motrin": "ibuprofen",
+    "coumadin": "warfarin",
+    "jantoven": "warfarin",
+    "rheumatrex": "methotrexate",
+    "trexall": "methotrexate",
+    "nolvadex": "tamoxifen",
+    "paxil": "paroxetine",
+    "imuran": "azathioprine",
+    "azasan": "azathioprine",
+    "zyloprim": "allopurinol",
+    "xeloda": "capecitabine",
+    "st john's wort": "st_johns_wort",
+    "st johns wort": "st_johns_wort",
+};
+
+glob EMERGENCY_PHRASES: list[str] = [
+    "call 911", "call 999", "call 112", "go to the emergency room", "go to the er",
+    "seek emergency care", "call your doctor immediately",
+];
+
+// Strips dose/frequency/route tokens off a pasted regimen line: "Imatinib 400mg daily" ->
+// "Imatinib". Keeps letters, spaces, hyphens, and apostrophes so multi-word names like
+// "St John's Wort" survive; stops at the first digit or other token that isn't part of a name.
+def:pub wr_strip_dose(raw: str) -> str {
+    m = re.match(r"^[A-Za-z][A-Za-z\-' ]*", raw.strip());
+    if m {
+        return m.group(0).strip();
+    }
+    return raw.strip();
+}
+
+// Vocabulary-only lookup (A1): brand alias first, then a direct match against
+// VOCAB_ANCHORS' ingredient keys. Returns "" — never a guessed key — on a miss.
+def:pub wr_resolve_ingredient(raw: str) -> str {
+    name = wr_strip_dose(raw).lower();
+    if name in BRAND_ALIASES {
+        return BRAND_ALIASES[name];
+    }
+    known: list[str] = [a["key"] for a in VOCAB_ANCHORS if a["kind"] == "ingredient"];
+    if name in known {
+        return name;
+    }
+    return "";
+}
+
+// Same vocabulary-only discipline for the metric a parsed threshold names — "fever" resolves
+// to the seeded symptom anchor; anything not in VOCAB_ANCHORS comes back "" (needs_review at
+// wiring time, exactly like an unrecognized ingredient).
+def:pub wr_resolve_symptom(metric: str) -> str {
+    known: list[str] = [a["key"] for a in VOCAB_ANCHORS if a["kind"] == "symptom"];
+    if metric in known {
+        return metric;
+    }
+    return "";
+}
+
+// One line per medication in, one classification out. A1: a miss produces no anchor, only a
+// needs_review entry carrying the original text.
+def:pub wr_parse_regimen(text: str) -> dict {
+    anchors: list[dict] = [];
+    needs_review: list[str] = [];
+    lines: list[str] = [ln.strip() for ln in text.split("\n") if ln.strip() != ""];
+    for line in lines {
+        key = wr_resolve_ingredient(line);
+        if key != "" {
+            anchors.append({"key": key, "kind": "ingredient", "raw": line});
+        } else {
+            needs_review.append(line);
+        }
+    }
+    return {"anchors": anchors, "needs_review": needs_review};
+}
+
+// "call if fever over 100.4" -> {metric, anchor_key, operator, threshold, raw}. Returns {} if
+// the text doesn't carry a comparable threshold — that's a timing instruction, or unstructured.
+def:pub wr_parse_threshold(text: str) -> dict {
+    m = re.search(
+        r"(?i)\b(fever|temperature|pain|nausea)\b.*?\b(?:over|above|greater than|>)\s*([\d.]+)",
+        text
+    );
+    if not m {
+        return {};
+    }
+    metric = m.group(1).lower();
+    if metric == "temperature" {
+        metric = "fever";
+    }
+    return {
+        "metric": metric,
+        "anchor_key": wr_resolve_symptom(metric),
+        "operator": ">",
+        "threshold": float(m.group(2)),
+        "raw": text,
+    };
+}
+
+// "within 30 minutes after food" -> {window_minutes, relation, raw}. Returns {} on no match.
+def:pub wr_parse_timing(text: str) -> dict {
+    m = re.search(r"(?i)within\s+(\d+)\s*(minutes?|hours?)\s*(before|after)\s+food", text);
+    if not m {
+        return {};
+    }
+    window = int(m.group(1));
+    if m.group(2).lower().startswith("hour") {
+        window = window * 60;
+    }
+    return {
+        "window_minutes": window,
+        "relation": m.group(3).lower() + "_food",
+        "raw": text,
+    };
+}
+
+def:pub wr_contains_emergency_phrase(text: str) -> bool {
+    low = text.lower();
+    for phrase in EMERGENCY_PHRASES {
+        if phrase in low {
+            return True;
+        }
+    }
+    return False;
+}
+
+// Classifies one instruction sentence. `is_emergency` is the flag #4 asks for — set from parsed
+// text only, never evaluated here (that's Recall's job, read.jac, S5).
+def:pub wr_parse_instruction(text: str) -> dict {
+    is_emergency = wr_contains_emergency_phrase(text);
+
+    threshold = wr_parse_threshold(text);
+    if threshold {
+        threshold["kind"] = "threshold";
+        threshold["is_emergency"] = is_emergency;
+        return threshold;
+    }
+
+    timing = wr_parse_timing(text);
+    if timing {
+        timing["kind"] = "timing";
+        timing["is_emergency"] = is_emergency;
+        return timing;
+    }
+
+    return {"kind": "unstructured", "raw": text, "is_emergency": is_emergency};
+}
 // ===== END INGEST =====
 
 // ===== SEED — Issue #7, not started. Blocked by #1, #2, #4. =====
