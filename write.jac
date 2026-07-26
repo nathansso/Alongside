@@ -51,6 +51,8 @@ glob VOCAB_ANCHORS: list[dict] = [
     {"key": "levofloxacin",          "kind": "ingredient"},  // urgent care: fluoroquinolone, QT-prolonging
     {"key": "naproxen",              "kind": "ingredient"},  // NSAID
     {"key": "ibuprofen",             "kind": "ingredient"},  // NSAID
+    {"key": "docusate",              "kind": "ingredient"},  // #7 seed: supportive-care drug with
+                                                              // deliberately zero adherence record
 
     // ingredient — added for #3's curated interaction pairs (recognizable archetypes plus the
     // St John's Wort / CYP3A4-induction demo path)
@@ -384,22 +386,173 @@ def:pub wr_parse_instruction(text: str) -> dict {
 }
 // ===== END INGEST =====
 
-// ===== SEED — Issue #7, not started. Blocked by #1, #2, #4. =====
-// 3 weeks of check-ins, 4-6 ingredient anchors from two prescribers, the adversarial QT
-// convergence (sinus-infection check-in, shared symptom anchor two Member hops out, no lexical
-// overlap between input text and the constraint it corroborates).
+// ===== SEED — Issue #7 =====
+//
+// One synthetic patient, three weeks, hand-built (not extracted live). This is the narrative
+// content only — (at, role, text) triples, exactly the `str` shape `Remember` takes as input
+// (CONTRACTS.md §4). Turning this into a loaded graph means running each entry through
+// `Remember` once #1 and #5 exist; `DEMO_MODE` fixtures (#25) key off this exact text and can't
+// be written until Remember's real `by llm()` #1 output shape exists to key against.
+//
+// Four ingredient anchors from two prescriber contexts, both parseable by INGEST above:
+// imatinib, ondansetron, docusate (oncologist-instructed) and levofloxacin (patient-reported,
+// from an urgent-care visit outside the graph's authority — S1: the graph never originates a
+// clinical fact, so this enters as a patient utterance like everything else self-reported).
+//
+// Required elements, one per entry below:
+//   - #1 loop-closure + hard-constraint-eligible instruction (oncologist role, fever threshold)
+//   - #2 timing instruction (oncologist role)
+//   - #3 a regimen anchor seeded with zero adherence record anywhere else in the corpus
+//   - #8 the adversarial case: sinus-infection check-in, names Levaquin (brand -> levofloxacin),
+//     zero lexical overlap with "QT"/"heart"/"ondansetron" — the shared qt_prolongation anchor is
+//     two Member hops from levofloxacin and two from ondansetron, reachable only by traversal
+//   - #6 -> #7 a 4-day observation gap (2026-06-04 -> 2026-06-08) for the `silence` mechanism
+//   - #9 a symptom (diarrhea) with no Member(toxicity_of) edge from any active drug in this
+//     vocabulary — the `unattributed_symptom` absence-class case
+//   - #10 a cost-related nonadherence utterance — distinct from #3's silent absence: this one is
+//     an explicit stated cause, for `nonadherence_cause`
+
+glob SEED_CHECKINS: list[dict] = [
+    {"at": "2026-06-01", "role": "oncologist",
+     "text": "Take Gleevec at the same time every day, and call the clinic immediately if your temperature goes over 100.4."},
+    {"at": "2026-06-01", "role": "oncologist",
+     "text": "Take Zofran within 30 minutes before food if the nausea is bad."},
+    {"at": "2026-06-01", "role": "oncologist",
+     "text": "Also take docusate daily for constipation prevention."},
+    {"at": "2026-06-02", "role": "patient",
+     "text": "Started the new medication today, feeling okay so far."},
+    {"at": "2026-06-03", "role": "patient",
+     "text": "Some nausea after breakfast, took the Zofran like they said."},
+    {"at": "2026-06-04", "role": "patient",
+     "text": "Nausea again this morning, not too bad."},
+    // -- 4-day observation gap: no entries 2026-06-05 through 2026-06-07 --
+    {"at": "2026-06-08", "role": "patient",
+     "text": "Feeling okay, no complaints today."},
+    {"at": "2026-06-11", "role": "patient",
+     "text": "Went to urgent care for a sinus infection and started Levaquin."},
+    {"at": "2026-06-13", "role": "patient",
+     "text": "Some loose stools the last couple days, not sure why."},
+    {"at": "2026-06-15", "role": "patient",
+     "text": "Skipped my Gleevec refill this week, it's expensive and I couldn't get to the pharmacy in time."},
+    {"at": "2026-06-18", "role": "patient",
+     "text": "Still feeling tired but otherwise okay."},
+    {"at": "2026-06-21", "role": "patient",
+     "text": "Finished the antibiotic course, sinus infection cleared up."},
+];
+
+with entry {
+    print(f"seed: {len(SEED_CHECKINS)} check-ins, {SEED_CHECKINS[0]['at']} to {SEED_CHECKINS[-1]['at']}");
+}
 // ===== END SEED =====
 
-// ===== REMEMBER walker — Issue #5, by llm() site #1. Not started. Blocked by #1, #2. =====
+// ===== REMEMBER walker — Issue #5, by llm() site #1 =====
 // walker Remember { has text: str; has role: str; has at: str; has out: Verdict = Verdict(); }
 // Writes Utterance (always) + Observation (if a symptom value) + extracted beliefs with
-// DerivedFrom/About. Severity typing is a provenance read off Utterance.role — never an
-// by llm() judgment.
+// DerivedFrom/About. Severity typing is a provenance read off Utterance.role — never a by llm()
+// judgment.
+//
+// The walker body is blocked by #1 (`Utterance`/`Observation`/`Belief`/`Anchor` +
+// `DerivedFrom`/`About` from graph.jac) and #29 (`Verdict` for `has out`). What has no graph
+// dependency — the `by llm()` #1 output schema, and the A1 guard that reads it — is below,
+// ready for the walker to call the moment #1 lands.
+//
+// **A1 boundary, made structural by this split:** the LLM's job stops at "what kind of
+// statement is this, and what free-text substance/metric did it name." It never decides whether
+// that name is real — `wr_check_extraction` re-resolves every name through VOCAB_ANCHORS
+// (INGEST, above) exactly like a regimen line. A name the LLM invents or mishears fails the same
+// lookup a real one passes; there is no code path where "the model was convincing" creates an
+// Anchor.
+
+obj ExtractedObservation {
+    has present: bool = False;   // does this check-in report a symptom value at all
+    has metric: str = "";        // free text, e.g. "nausea" — not yet vocabulary-checked
+    has value: float = 0.0;
+}
+
+obj ExtractedBelief {
+    has kind: str = "preference";  // "preference" | "constraint" — the LLM's read of statement type
+    has claim: str = "";           // normalized natural-language claim text
+    has substance: str = "";       // free-text substance name mentioned, "" if none
+    has polarity: float = 0.0;     // Preference.polarity; meaningful only when kind == "preference"
+}
+
+// `by llm()` #1 returns this. CLAUDE.md gotcha: `by llm()` returns an obj, never a node — the
+// walker copies these fields into real Utterance/Observation/Belief nodes once #1 exists.
+obj ExtractionResult {
+    has observation: ExtractedObservation = ExtractedObservation();
+    has beliefs: list[ExtractedBelief] = [];
+}
+
+// A1 guard, run once per extracted belief that names a substance. Reuses the same vocabulary
+// lookups as INGEST (wr_resolve_ingredient) so "my neighbor gave me St John's Wort" and a pasted
+// regimen line resolve identically — one vocabulary, two entry points.
+def:pub wr_check_extraction(belief: ExtractedBelief) -> dict {
+    if belief.substance == "" {
+        return {"needs_review": False, "anchor_key": ""};
+    }
+    key = wr_resolve_ingredient(belief.substance);
+    if key != "" {
+        return {"needs_review": False, "anchor_key": key};
+    }
+    // A1: no vocabulary match => no anchor, ever. The walker writes the Belief with
+    // needs_review = True and reports Concern(kind="unrecognized_substance") — never "safe"
+    // per S3, the page says "not in your record".
+    return {"needs_review": True, "anchor_key": ""};
+}
 // ===== END REMEMBER =====
 
-// ===== CONSOLIDATE walker — Issue #6, by llm() site #2. Not started. Blocked by #1, #5. =====
+// ===== CONSOLIDATE walker — Issue #6, by llm() site #2 =====
 // walker Consolidate { has budget: int = 6; has out: Verdict = Verdict(); }
 // Self-budgeted Conflicts derivation; persistent queue across turns; never deletes a node.
+//
+// The walker body itself is blocked by #1 (needs `Belief`/`Conflicts` from graph.jac) and #5
+// (needs real `Belief` pairs to rank). The self-budgeting *algorithm* — "plans its own work",
+// the strongest autonomy story in the system (ARCHITECTURE.md §4) — has no graph dependency and
+// is split out here so it's ready to call once the walker can supply real candidate pairs.
+//
+// Rank: shared Anchor > reinforced this turn > cold (ARCHITECTURE.md §4). A pair carrying a
+// `last_examined` marker is skipped entirely — that's what makes next turn examine a different
+// slice instead of the same `budget` pairs every time.
+//
+// **Schema note (2026-07-26):** Nathan's #1 review flagged that `graph.jac` as drafted has
+// nowhere to persist "already examined" — `Conflicts` is only written when a pair conflicts, so
+// a satisfiable pair leaves no trace and gets re-examined every turn forever. He proposed either
+// `edge Examined: Belief --> Belief { has at: str; has conflicting: bool = False; }` or
+// `Belief.last_examined: str`. Either resolution is fine here: `wr_rank_conflict_candidates`
+// only reads `pair["last_examined"]` off whatever dict the walker builds — it doesn't care which
+// edge/field that value was read from once #1 lands.
+
+// `by llm()` #2 returns this — joint satisfiability of two natural-language constraints.
+obj SatisfiabilityResult {
+    has jointly_satisfiable: bool = True;  // False => the pair conflicts, walker writes Conflicts
+    has because: str = "";                 // reason string; empty only when jointly_satisfiable
+}
+
+def:pub wr_conflict_tier(pair: dict) -> int {
+    if pair.get("shared_anchor", False) {
+        return 0;
+    }
+    if pair.get("reinforced_this_turn", False) {
+        return 1;
+    }
+    return 2;
+}
+
+// `pairs`: candidate Belief-pair descriptors — {"id": str, "shared_anchor": bool,
+// "reinforced_this_turn": bool, "last_examined": str | None}. The walker builds this list from
+// the graph; this function only ranks and slices it.
+def:pub wr_rank_conflict_candidates(pairs: list[dict], budget: int) -> dict {
+    eligible: list[dict] = [p for p in pairs if not p.get("last_examined")];
+    ranked: list[dict] = sorted(eligible, key=wr_conflict_tier);
+    examine: list[dict] = ranked[:budget];
+    queue: list[dict] = ranked[budget:];
+    return {
+        "examine": examine,
+        "queue": queue,
+        "examined_count": len(examine),
+        "queued_count": len(queue),
+    };
+}
 // ===== END CONSOLIDATE =====
 
 // ===== DEMO_MODE — Issue #25, not started. Blocked by #7. =====
