@@ -245,7 +245,7 @@ Speech-to-text is a browser API, not a `by llm()` site (`ARCHITECTURE.md` §8), 
 to pin here.
 
 ```jac
-obj CaseFile  { has onset: str; has timeline: list[TimelineEntry] = [];
+obj CaseFile  { has onset: str = ""; has timeline: list[TimelineEntry] = [];
                 has counterfactual: str = ""; has existing_instruction: str = "";
                 has citations: list[str] = []; }
 obj TimelineEntry { has at: str; has what: str; has source: str; }
