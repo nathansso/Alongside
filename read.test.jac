@@ -17,13 +17,21 @@
 # Every test keys its anchors with a per-test prefix so the shared root cannot leak one test's
 # topology into the next.
 #
+# 3. THE #9 TESTS ARE ORDER-SENSITIVE AND THE PREFIXES DO NOT PROTECT THEM. The emergency scan is
+#    deliberately NOT filtered by `self.anchors` (S5 — see `rd_emergency`), so it sees every
+#    emergency `Constraint` at root regardless of which anchors a test queries. The instant one
+#    test seeds an emergency that FIRES, every later spawn in this file takes the bypass. So the
+#    `e*_` tests below run non-firing fixtures first and firing fixtures last, and the firing ones
+#    assert "a concern for MY anchor exists" rather than an exact concern count. This is a real
+#    property of the design, not a test smell: a fired emergency really does pre-empt everything.
+#
 # The annex sees `read.jac`'s own declarations but NOT its imports, so the archetypes it builds
 # fixtures out of have to be imported again here. Omitting the edges fails with E2018 in connect
 # position — and only under `jac check .`, since `jac check read.jac` alone does not pull the annex.
 
 import from graph {
-    Anchor, Constraint, Utterance,
-    DerivedFrom, Governs, Excludes, Member, Supersedes
+    Anchor, Belief, Constraint, Observation, Utterance,
+    DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
 }
 
 
@@ -312,4 +320,277 @@ test "Member expansion does not walk backwards into sibling members" {
     v = r.reports[0];
     assert len(v.violations) == 0, "a constraint on one class member must not bind its siblings";
     assert v.allowed;
+}
+
+
+# ==========================================================================================
+# #9 — the emergency bypass. EVERYTHING BELOW IS ORDER-SENSITIVE; see note 3 in the header.
+# Non-firing fixtures first (e1–e5), firing fixtures last (e6–e8).
+# ==========================================================================================
+
+# Below the parsed threshold, an emergency `Constraint` is just an ordinary channel B hard
+# constraint: no bypass, and the normal read path still returns it.
+test "an emergency criterion below its threshold does not fire, and channel B runs" {
+    t = "e1_";
+    fever = Anchor(key=t + "fever", kind="symptom");
+    root ++> fever;
+    u = Utterance(
+        text="Call me right away if your temperature goes over 100.4 during the nadir.",
+        at="2026-03-01",
+        role="oncologist"
+    );
+    root ++> u;
+    c = Constraint(
+        claim="fever over 100.4 during the nadir is an emergency",
+        hard=True, emergency=True,
+        threshold_level=100.4, threshold_days=0, threshold_metric="temperature"
+    );
+    root ++> c;
+    c +>:Governs:+> fever;
+    c +>:DerivedFrom:+> u;
+    o = Observation(metric="temperature", value=99.1, at="2026-03-14");
+    root ++> o;
+    o +>:Reports:+> fever;
+
+    r = root spawn Recall(anchors=[t + "fever"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    assert len(v.concerns) == 0, "99.1 is below 100.4 — the bypass must not fire";
+    assert len(v.violations) == 1, "channel B must still run and return the constraint";
+    assert not v.allowed, "it is still a hard constraint";
+}
+
+
+# THE REGRESSION THE `o.value <= 0.0` GUARD EXISTS FOR. An emergency criterion with no parsed
+# numeric threshold (`threshold_level` 0.0, `threshold_metric` "") would otherwise be satisfied by
+# EVERY observation on its anchor — including a value of 0, which on both pinned scales means the
+# symptom is ABSENT. Without the guard, logging "no rash today" raises a full-screen
+# "contact your care team now".
+test "an observation of zero never fires an emergency criterion" {
+    t = "e2_";
+    rash = Anchor(key=t + "rash", kind="symptom");
+    root ++> rash;
+    u = Utterance(text="Call us if you get a rash.", at="2026-03-02", role="oncologist");
+    root ++> u;
+    c = Constraint(claim="a rash is a reason to call", hard=True, emergency=True);
+    root ++> c;
+    c +>:Governs:+> rash;
+    c +>:DerivedFrom:+> u;
+    # the patient checking in to say they are FINE
+    o = Observation(metric="rash", value=0.0, at="2026-03-14");
+    root ++> o;
+    o +>:Reports:+> rash;
+
+    r = root spawn Recall(anchors=[t + "rash"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    assert len(v.concerns) == 0, "reporting the ABSENCE of a symptom must not raise the alarm";
+    assert len(v.violations) == 1, "channel B runs normally";
+}
+
+
+# A2's one carve-out, and it matters most here: a retracted emergency instruction that keeps firing
+# is an interstitial nobody can turn off.
+test "a superseded emergency constraint does not fire" {
+    t = "e3_";
+    nausea = Anchor(key=t + "nausea", kind="symptom");
+    root ++> nausea;
+    u = Utterance(text="Call if the nausea hits a 7.", at="2026-01-05", role="oncologist");
+    root ++> u;
+    c = Constraint(
+        claim="nausea at 7 or above is a reason to call", hard=True, emergency=True,
+        threshold_level=7.0, threshold_metric="nausea"
+    );
+    root ++> c;
+    c +>:Governs:+> nausea;
+    c +>:DerivedFrom:+> u;
+
+    repl = Belief(claim="we have you on a standing antiemetic now; no need to call");
+    root ++> repl;
+    repl +>:Supersedes:+> c;
+
+    o = Observation(metric="nausea", value=8.0, at="2026-03-14");
+    root ++> o;
+    o +>:Reports:+> nausea;
+
+    r = root spawn Recall(anchors=[t + "nausea"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    assert len(v.concerns) == 0, "Supersedes kills an emergency constraint like any other";
+    assert len(v.violations) == 0, "and channel B drops it too";
+}
+
+
+# `threshold_days` counts DISTINCT DATES, not observations. One date does not satisfy D = 2 — and
+# three readings on that one afternoon still do not.
+test "threshold_days requires that many distinct dates" {
+    t = "e4_";
+    pain = Anchor(key=t + "mouth-pain", kind="symptom");
+    root ++> pain;
+    u = Utterance(text="Call if it stays at 6 or worse for two days.", at="2026-02-10", role="oncologist");
+    root ++> u;
+    c = Constraint(
+        claim="mouth pain at 6+ for two days is a reason to call", hard=True, emergency=True,
+        threshold_level=6.0, threshold_days=2, threshold_metric="mouth_pain"
+    );
+    root ++> c;
+    c +>:Governs:+> pain;
+    c +>:DerivedFrom:+> u;
+
+    for val in [7.0, 8.0, 6.5] {
+        o = Observation(metric="mouth_pain", value=val, at="2026-03-14");
+        root ++> o;
+        o +>:Reports:+> pain;
+    }
+
+    r = root spawn Recall(anchors=[t + "mouth-pain"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+    assert len(v.concerns) == 0, "three readings on one day is one day, not two";
+}
+
+
+# S2 again, at the worst possible stakes: no `DerivedFrom` means `pg_row` drops the row, so the
+# interstitial would never render. The bypass therefore does NOT disengage — returning a blocked
+# verdict with nothing in it is strictly worse for the patient than falling through to channel B.
+test "an uncitable emergency constraint blocks, emits no Concern, and falls through to channel B" {
+    t = "e5_";
+    bleed = Anchor(key=t + "bleeding", kind="symptom");
+    root ++> bleed;
+
+    bad = Constraint(claim="any bleeding is a reason to call", hard=True, emergency=True);
+    root ++> bad;
+    bad +>:Governs:+> bleed;
+    # deliberately no DerivedFrom edge
+
+    o = Observation(metric="bleeding", value=3.0, at="2026-03-14");
+    root ++> o;
+    o +>:Reports:+> bleed;
+
+    # an ordinary, properly cited constraint on the same anchor — its Violation is the proof that
+    # channel B ran rather than being pre-empted
+    u2 = Utterance(text="Let us know about any bruising.", at="2026-02-20", role="oncologist");
+    root ++> u2;
+    ok = Constraint(claim="report bruising at the next visit", hard=False);
+    root ++> ok;
+    ok +>:Governs:+> bleed;
+    ok +>:DerivedFrom:+> u2;
+
+    r = root spawn Recall(anchors=[t + "bleeding"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    assert len(v.concerns) == 0, "a Concern `pg_row` would drop must not be fabricated";
+    assert not v.allowed, "the criterion was met — the blocking answer survives";
+    assert len(v.violations) == 1, "no disengage: channel B must still have run";
+
+    noted = False;
+    for n in r.rd_notes {
+        if "uncitable emergency constraint" in n {
+            noted = True;
+        }
+    }
+    assert noted, "an unrenderable emergency must be recorded, not dropped in silence";
+}
+
+
+# ==========================================================================================
+# ACCEPTANCE (#9). From here down an emergency FIRES, so every later spawn in this file takes
+# the bypass. Assertions below are scoped to their own anchor rather than to exact counts.
+# ==========================================================================================
+
+test "a febrile neutropenia crossing produces one escalate Concern, cited and reported once" {
+    t = "e6_";
+    fever = Anchor(key=t + "fever", kind="symptom");
+    root ++> fever;
+    u = Utterance(
+        text="Call me right away if your temperature goes over 100.4 during the nadir.",
+        at="2026-03-01",
+        role="oncologist"
+    );
+    root ++> u;
+    c = Constraint(
+        claim="fever over 100.4 during the nadir is an emergency",
+        hard=True, emergency=True,
+        threshold_level=100.4, threshold_days=0, threshold_metric="temperature"
+    );
+    root ++> c;
+    c +>:Governs:+> fever;
+    c +>:DerivedFrom:+> u;
+    o = Observation(metric="temperature", value=101.2, at="2026-03-14");
+    root ++> o;
+    o +>:Reports:+> fever;
+
+    r = root spawn Recall(anchors=[t + "fever"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+
+    # `rd_finish` never fires after `disengage`, so this also proves the escalate path does not
+    # double-report.
+    assert len(r.reports) == 1, "exactly one report on the escalate path";
+    v = r.reports[0];
+
+    assert len(v.concerns) == 1, f"expected one escalate Concern, got {len(v.concerns)}";
+    con = v.concerns[0];
+    assert con.kind == "emergency", "CONTRACTS §3 pinned kind";
+    assert con.action == "escalate", "#9 contract line";
+    assert con.anchor == t + "fever";
+    assert con.since == "2026-03-14", "since is the earliest qualifying observation date";
+    assert not v.allowed, "a hard emergency constraint blocks";
+
+    # Evidence ORDER is load-bearing: `pg_slots` fills {criterion} from utts[0].text and {source}
+    # from utts[0].role, and those are the only two slots the `emergency` template has. The
+    # Utterance must come first or the interstitial renders the wrong headline.
+    assert len(con.evidence) == 2, "one Utterance citation plus one Observation";
+    assert con.evidence[0] == jid(u), "the Utterance must be evidence[0]";
+    assert con.evidence[1] == jid(o), "the crossing Observation follows it";
+}
+
+
+# S5, AND THE TEST THAT PINS ABILITY DECLARATION ORDER. `rd_emergency` sits above `rd_start` in
+# `read.jac`; move it below and the bypass stops pre-empting the read path — silently, with
+# `jac check` clean and every other test in this file still green. This is the only thing that
+# catches that. Do not delete it.
+test "channel B does not run on the escalate path" {
+    t = "e7_";
+    # a perfectly ordinary hard constraint, citable, sitting on the anchor being queried.
+    # Channel B would certainly return it — if channel B ran at all.
+    a = Anchor(key=t + "warfarin", kind="ingredient");
+    root ++> a;
+    u = Utterance(text="No warfarin with this combination.", at="2026-05-02", role="pharmacist");
+    root ++> u;
+    c = Constraint(claim="no warfarin on this regimen", hard=True);
+    root ++> c;
+    c +>:Governs:+> a;
+    c +>:DerivedFrom:+> u;
+
+    r = root spawn Recall(anchors=[t + "warfarin"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    assert len(v.concerns) > 0, "precondition: the e6_ emergency is still live and must fire";
+    assert len(v.violations) == 0,
+        "S5: an escalate must pre-empt channel B entirely — a violation here means `rd_emergency` "
+        "no longer runs first";
+    assert not v.allowed;
+}
+
+
+# The other half of e4_: a second qualifying DATE satisfies D = 2 and the criterion fires.
+test "a second qualifying date satisfies threshold_days and fires" {
+    t = "e4_";
+    found: list[Anchor] = [root -->[?:Anchor, key == t + "mouth-pain"]];
+    assert len(found) == 1, "fixture precondition: the e4_ anchor is still there";
+
+    o = Observation(metric="mouth_pain", value=6.0, at="2026-03-15");
+    root ++> o;
+    o +>:Reports:+> found[0];
+
+    r = root spawn Recall(anchors=[t + "mouth-pain"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    hit = False;
+    for con in v.concerns {
+        if con.anchor == t + "mouth-pain" {
+            hit = True;
+            assert con.action == "escalate";
+            assert con.since == "2026-03-14", "since is the EARLIEST qualifying date, not the last";
+        }
+    }
+    assert hit, "two distinct dates at 6.0+ satisfies threshold_days = 2";
 }
