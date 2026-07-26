@@ -77,7 +77,11 @@ first, and why nobody should be deep in a branch while it is still open.
 **#30 closes → #1 opens → #1 merges → the freeze lands.** Announce it. Everyone resets their graph.
 
 After that all three tracks fan out against `CONTRACTS.md`, stubbing every producer that does not
-exist yet (§7). Laksh writes #17 and tags `single-file-slice`.
+exist yet (§7). Laksh writes #17.
+
+**Schedule the rehearsal merge now, for the midpoint** — the moment all five files compile together.
+It is thirty minutes on a throwaway branch and it is the difference between a final merge that works
+and one that surprises you at hour 22. `CONTRACTS.md` §1a has the procedure.
 
 **First integration checkpoint:** the seeded patient (#7) rendering real rows on the page (#20),
 through whatever mix of stubs and real walkers exists at that moment. Get there early and keep it

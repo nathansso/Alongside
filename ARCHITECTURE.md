@@ -532,41 +532,55 @@ No scheduler, cron, or background sweep is available or needed. `Vigil` on app o
 
 ## 10. Repo layout
 
+**Five files while building. One file at submission.** Ownership and the merge procedure are in
+`CONTRACTS.md` sections 1 and 1a — read that before writing a line.
+
 ```
-main.jac                  THE VERTICAL SLICE — see below
-graph/archetypes.jac      nodes, edges, Verdict/Concern/Violation objs
-graph/vocab.jac           vocabulary as a `glob` dict → Member edges
-walkers/recall.jac        two-channel traversal + detection + corroboration; review first
-walkers/consolidate.jac   self-budgeted Conflicts derivation, by llm() #2
-walkers/vigil.jac         runs on open, elapsed-time arithmetic, no LLM
-walkers/investigate.jac   case-file assembly, no LLM
-walkers/prepare.jac       page model assembly, no LLM
-render/templates.jac      Concern.kind → sentence templates. NO by llm() (S8)
-ingest/regimen.jac        deterministic med-list parse → ingredient anchors
-components/*.cl.jac       page sections, activity panel, inspector toggle
-eval/harness.jac          recall@constraint over the seed set
-eval/baseline.jac         cosine top-k. QUARANTINED. Never imported by a walker.
-seed/patient.jac          hand-built seed graph, loaded at start
+graph.jac       Bryan    nodes, edges, report objs. Nodes/edges FROZEN after #1.
+write.jac       Bryan    Remember (by llm() #1), Consolidate (by llm() #2),
+                         vocabulary glob, regimen parse, seed patient, DEMO_MODE
+read.jac        Nathan   Recall (channel A + B, detection, corroboration), Vigil,
+                         Investigate, eval harness, QUARANTINED cosine baseline
+main.jac        Laksh    Prepare, template registry, imports, cl { } mounting the page
+page.cl.jac     Laksh    concerns page, rows, activity panel, check-in, inspector
+jac.toml        Laksh    [serve] base_route_app = "app"
+styles/global.css Laksh  the one stylesheet. No .style.css annexes — see CONTRACTS §1a.
 ```
 
-Every file is Jac. Python appears only as libraries imported into Jac. No separate Python service,
-no separate React app.
+**Every file has exactly one owner**, which is what makes merge conflicts structurally impossible
+rather than merely discouraged. Every file is Jac. Python appears only as libraries imported into Jac.
+No separate Python service, no separate React app.
 
-### `main.jac` is the vertical slice
+`page.cl.jac` is split out for exactly one reason: **HMR reloads only `.cl.jac` files**, server
+modules need a full restart, and the page is what gets iterated on most. It merges into `main.jac` at
+the end.
+
+**The quarantined baseline is a weak point of the collapse.** `eval/baseline.jac` used to be a
+separate file so that "never imported by a walker" was structurally true. Inside `read.jac` alongside
+`Recall` it becomes a comment fence. Fence it loudly; if it ever gets referenced from traversal code
+the eval numbers are worthless.
+
+### `main.jac` at submission is the vertical slice
 
 The rubric names four things: `by llm()`, walkers, graph-native data modeling, and **single-file
-full-stack development**. `main.jac` demonstrates all four **in one file**:
+full-stack development**. After the final merge, `main.jac` demonstrates all four **in one file**:
 
 ```
 main.jac
 ├── archetypes            graph-native data modeling
 ├── Remember              a walker, carrying by llm() #1
-├── Prepare               a walker, carrying a real graph traversal
+├── Consolidate           a walker, carrying by llm() #2
+├── Recall                a real multi-hop traversal with detection
+├── Prepare               page-model assembly
 └── cl { }                the concerns page UI
 ```
 
 This is the genuine entry point, not a demo prop. Open it at the end of the demo and every word of
 the claim is true of what is on screen.
+
+**Claim the artifact, not the history.** Building in modules and consolidating before submission is
+ordinary engineering; the deliverable is what gets judged. Do not imply the repo was ever one file
+during development.
 
 **Mechanics, verified against the Jac guides:**
 
