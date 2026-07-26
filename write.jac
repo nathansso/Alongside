@@ -18,7 +18,7 @@ import re;
 import os;
 import from byllm.lib { MockLLM }
 import from graph { Anchor, Member, Utterance, Observation, Belief, Constraint, Verdict, Concern,
-                     DerivedFrom, About, Governs, Examined, Conflicts }
+                     DerivedFrom, About, Governs, Examined, Conflicts, Excludes }
 
 # ===== VOCABULARY — Issue #2 =====
 #
@@ -547,6 +547,12 @@ glob SEED_CHECKINS: list[dict] = [
      "text": "Some loose stools the last couple days, not sure why."},
     {"at": "2026-06-15", "role": "patient",
      "text": "Skipped my Gleevec refill this week, it's expensive and I couldn't get to the pharmacy in time."},
+    # #11 the interaction-gate case (ARCHITECTURE.md §7 row 1, #3's acceptance path): a
+    # supplement from outside the graph's authority (S1), zero mention of "CYP3A4" or "imatinib"
+    # or "Gleevec" — the interaction is only reachable by INTERACTION_TABLE + Member(class_member)
+    # traversal, never by lexical overlap with this sentence.
+    {"at": "2026-06-16", "role": "patient",
+     "text": "My neighbor gave me some St John's Wort for stress, been taking it for a few days."},
     {"at": "2026-06-18", "role": "patient",
      "text": "Still feeling tired but otherwise okay."},
     {"at": "2026-06-21", "role": "patient",
@@ -688,6 +694,9 @@ def wr_demo_extract(text: str) -> ExtractionResult {
     }
     if text == "Skipped my Gleevec refill this week, it's expensive and I couldn't get to the pharmacy in time." {
         return ExtractionResult(beliefs=[ExtractedBelief(kind="constraint", claim="skipped Gleevec refill due to cost", substance="Gleevec", polarity=0.0)]);
+    }
+    if text == "My neighbor gave me some St John's Wort for stress, been taking it for a few days." {
+        return ExtractionResult(beliefs=[ExtractedBelief(kind="constraint", claim="started St John's Wort from a neighbor", substance="St John's Wort", polarity=0.0)]);
     }
     if text == "Still feeling tired but otherwise okay." {
         return ExtractionResult();
@@ -945,6 +954,126 @@ def wr_find_belief_by_jid(at_root: Root, target_jid: str) -> Belief | None {
     return None;
 }
 
+# Interaction-table wiring — Issue #3's remaining acceptance line. INTERACTION_TABLE (INGEST,
+# above) is (a, b, because, source) data only; nothing turned it into a real Excludes edge until
+# now. read.jac:253-257 names write.jac as the producer: one Constraint that Excludes the "a"
+# side and Governs the "b" side, once the patient's regimen contains both. Lives in Consolidate,
+# not Remember: it's a rewrite over accumulated state, additive-only (A6), not an ingest
+# operation on a single check-in, and Remember's pinned signature (CONTRACTS.md §4) doesn't
+# cover it.
+
+# The anchor itself plus its class_member parents, one hop up — mirrors read.jac's
+# rd_self_and_classes at read time. Reimplemented locally, not imported: satellites import only
+# from graph.jac, never from each other (CONTRIBUTING.md).
+def wr_anchor_and_classes(a: Anchor) -> list[str] {
+    keys: list[str] = [a.key];
+    for x in [a ->:Member:->] {
+        for e in [edge a ->:Member:-> x] {
+            if e.via == "class_member" {
+                keys.append(x.key);
+            }
+        }
+    }
+    return keys;
+}
+
+# Every key the patient's current Beliefs reach, self-or-class, deduplicated. This is the set
+# INTERACTION_TABLE pairs are checked against — "the regimen contains both sides" made concrete.
+def wr_regimen_anchor_keys(at_root: Root) -> list[str] {
+    keys: list[str] = [];
+    beliefs: list[Belief] = [at_root -->][?:Belief];
+    for b in beliefs {
+        for a in [b ->:About:->][?:Anchor] {
+            for k in wr_anchor_and_classes(a) {
+                if k not in keys {
+                    keys.append(k);
+                }
+            }
+        }
+    }
+    return keys;
+}
+
+# First Belief reaching anchor_key (self-or-class) and its DerivedFrom Utterance — the evidence
+# a newly-wired interaction Constraint cites (S2: no source, no verdict).
+def wr_utterance_for_anchor_key(at_root: Root, anchor_key: str) -> Utterance | None {
+    beliefs: list[Belief] = [at_root -->][?:Belief];
+    for b in beliefs {
+        for a in [b ->:About:->][?:Anchor] {
+            if anchor_key in wr_anchor_and_classes(a) {
+                utts: list[Utterance] = [b ->:DerivedFrom:->];
+                if len(utts) > 0 {
+                    return utts[0];
+                }
+            }
+        }
+    }
+    return None;
+}
+
+# True if a Constraint already Excludes a_anchor and Governs b_anchor — prevents re-wiring the
+# same pair on every Consolidate run.
+def wr_interaction_already_wired(a_anchor: Anchor, b_anchor: Anchor) -> bool {
+    excl: list[Constraint] = [a_anchor <-:Excludes:<-];
+    for c in excl {
+        gov: list[Anchor] = [c ->:Governs:->];
+        for g in gov {
+            if g.key == b_anchor.key {
+                return True;
+            }
+        }
+    }
+    return False;
+}
+
+# Turns INTERACTION_TABLE pairs into real Constraint + Excludes + Governs wiring, once both sides
+# are in the patient's regimen (self-or-class). Additive only (A6): never rewrites or deletes a
+# prior wiring, only skips pairs already covered. hard=False always — the source is a curated
+# table, not an Utterance with a clinical role (CONTRACTS.md §2), so it can never earn hard=True
+# the way a #4 threshold instruction can.
+def wr_wire_interactions(at_root: Root) -> list[Constraint] {
+    written: list[Constraint] = [];
+    keys: list[str] = wr_regimen_anchor_keys(at_root);
+    for pair in INTERACTION_TABLE {
+        a_key: str = str(pair["a"]);
+        b_key: str = str(pair["b"]);
+        if a_key not in keys {
+            continue;
+        }
+        if b_key not in keys {
+            continue;
+        }
+        a_anchor: Anchor | None = wr_find_anchor(at_root, a_key);
+        b_anchor: Anchor | None = wr_find_anchor(at_root, b_key);
+        if a_anchor is None {
+            continue;
+        }
+        if b_anchor is None {
+            continue;
+        }
+        a_node: Anchor = a_anchor;
+        b_node: Anchor = b_anchor;
+        if wr_interaction_already_wired(a_node, b_node) {
+            continue;
+        }
+
+        because: str = str(pair["because"]);
+        c = (at_root ++> Constraint(claim=because, hard=False))[0];
+        a_src: Utterance | None = wr_utterance_for_anchor_key(at_root, a_key);
+        if a_src is not None {
+            c +>:DerivedFrom():+> a_src;
+        }
+        b_src: Utterance | None = wr_utterance_for_anchor_key(at_root, b_key);
+        if b_src is not None {
+            c +>:DerivedFrom():+> b_src;
+        }
+        c +>:Excludes(because=because):+> a_node;
+        c +>:Governs():+> b_node;
+        written.append(c);
+    }
+    return written;
+}
+
 # MockLLM-first, same reasoning as wr_extract's glob above — no live provider key exists yet
 # (Nathan's #27). A second, independently-bound model so this site's fixture queue never
 # interferes with Remember's.
@@ -1010,6 +1139,8 @@ walker:pub Consolidate {
                 self.out.conflicts.append(claim_a + " vs " + claim_b + ": " + result.because);
             }
         }
+
+        wr_wire_interactions(here);
     }
 
     can done with Root exit {
@@ -1018,7 +1149,7 @@ walker:pub Consolidate {
 }
 # ===== END CONSOLIDATE =====
 
-# ===== DEMO_MODE — Issue #25, not started. Blocked by #7. =====
+# ===== DEMO_MODE — Issue #25 =====
 # Both by llm() sites (REMEMBER, CONSOLIDATE) branch on it and return fixtures keyed to exact
 # Utterance.text. Fixtures live in the SEED section above.
 #
