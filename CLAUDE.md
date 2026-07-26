@@ -119,12 +119,42 @@ dependency** and **no `.style.css` annex** (merge disciplines, `CONTRACTS.md` §
 - **On the final transcript, `root spawn Remember(text=…, role="patient", at=…)`.** Keep the
   transcript in an editable field so `DEMO_MODE` fixture keys still match after a mis-hearing.
 
+### The graph reset path — resolved by #30
+
+**Three paths, in order of preference. All verified on Jac 0.16.7 locally.**
+
+1. **`jac clean --force`** — removes `.jac/data/` and nothing else. This is the CLI reset.
+2. **Delete one file.** The whole persisted graph is a single SQLite file, `.jac/data/<project>.db`.
+   Any file explorer can delete it — **no shell required.** This is the jachammer path if its file
+   tree shows dotfolders.
+3. **An in-app reset walker**, if neither of the above is reachable. Works anywhere, needs nothing.
+   See `spike/graph.jac` → `SpikeReset`. Two rules: **filter `del` by node type** (an unfiltered
+   `del [-->]` walks into root's own anchors and raises EdgeAnchor errors), and **collect
+   transitively before deleting** — `[root -->][?:Type]` reaches depth 1 only, so anything further
+   out gets orphaned rather than deleted.
+
+### Archetype edits are far less dangerous than we assumed
+
+`NodeAnchor ... is not a valid reference!` **did not reproduce on Jac 0.16.7.** What actually
+happens, measured:
+
+| Change | Behaviour |
+|---|---|
+| add a field to a node | `SqliteMemory: schema drift ... attempting best-effort load` — data loads, new field defaults |
+| change a field's type | same — best-effort load, surviving fields keep their values |
+| remove a field | same |
+| add a field to an **edge** | same, and the edge and its attributes survive |
+| **rename/remove an archetype** | `Refused to deserialize unregistered class` → anchor moved to `anchors_quarantine`, connected edges cascade-quarantined, **app keeps running** with those nodes absent |
+
+So a schema change costs a **re-seed**, not a recovery. It is still silent data loss — best-effort
+load and quarantine both drop what no longer maps — so the freeze and the announce-on-merge rule in
+`CONTRIBUTING.md` §6 still stand. But nobody's graph "corrupts", and nobody loses an hour to it.
+
+**Caveat: this was measured locally on 0.16.7 with the SQLite backend.** Confirm the Jac version in
+jachammer before relying on it.
+
 ### Gotchas that cost an hour each
 
-- **Editing archetypes corrupts the persisted graph.** Changing a node or edge definition between
-  runs gives `NodeAnchor ... is not a valid reference!`. Locally the reflex is `rm -rf .jac/data/`.
-  **On jachammer there is no shell.** The reset path is being established in issue #30 — check that
-  issue for the answer, and if it is still open, do not start schema work.
 - **Edge abilities are a silent no-op.** `can ... with Walker entry` inside an `edge` compiles clean
   and never fires. All scoring lives in walker node abilities reading `[edge ...]`.
 - **`++>` returns a list.** `b = (anchor ++> Belief(claim=c))[0];`. A missing `[0]` fails somewhere
@@ -139,6 +169,24 @@ dependency** and **no `.style.css` annex** (merge disciplines, `CONTRACTS.md` §
   `jac check` and fail later.
 - **Walker `has` state is global to the walker, not per-branch.** Memoize per node in a dict;
   decaying a walker field directly corrupts across branches.
+
+### Found in #30 — all cost an hour each, all reproducible in `spike/`
+
+- **A walker the client spawns must be `walker:pub`.** A plain `walker` returns
+  `{"error": "Unauthorized"}` from `/walker/<name>`, and the client surfaces it as an
+  unhelpful `Walker X failed:` with an empty reason. `CONTRACTS.md` §4 currently pins all six
+  walkers without `:pub` — they all need it.
+- **Declaring an `obj` in the same module as the `cl { }` block that receives it breaks the client
+  build.** The compiler emits the class twice — once as an interop wire stub, once transpiled —
+  and esbuild fails with `The symbol "X" has already been declared`. Moving the objs to a separate
+  module fixes it. **This is a direct hazard to the single-file merge in `CONTRACTS.md` §1a**, which
+  puts the report objs and the `cl { }` block in one file. Test it at the rehearsal merge.
+- **`len([root -->][?:Type])` written inline fails JS codegen with `E5016`** when the walker is
+  reachable from a `cl { }` block. Bind the list to a typed local first, then `len()` it.
+- **Removing a `.jac` file does not clear its compiled JS.** `.jac/client/compiled/` keeps the stale
+  output and the old error persists. `rm -rf .jac/client/compiled` and restart.
+- **`jac check` passes on all of the above.** None of these are type errors; they surface at the
+  Vite build or at runtime in the browser.
 
 ## Using jachammer
 

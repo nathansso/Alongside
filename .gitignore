@@ -20,3 +20,7 @@ Thumbs.db
 # Python bytecode (Jac imports Python libs)
 __pycache__/
 *.py[cod]
+
+# Issue #30 spike build artifacts
+spike/.jac/
+spike/server.log
