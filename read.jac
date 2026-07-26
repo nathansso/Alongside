@@ -118,6 +118,31 @@ def rd_distinct_dates(obs: list[Observation]) -> list[str] {
 }
 
 
+# Does a `Constraint`'s parsed threshold fire on this anchor, and on which dates?
+#
+# THE SHARED CROSSING TEST. #9's emergency bypass and #12's `persistence` are the same arithmetic
+# over the same parsed fields, distinguished only by `Constraint.emergency` and therefore by
+# ceiling — `escalate` for one, `ask` for the other. Keeping the test in one place is what stops
+# the emergency and non-emergency halves of "a stated threshold was crossed" from drifting apart.
+#
+# Returns the qualifying dates, ascending, or [] when the criterion is not met.
+#
+# `threshold_days` is honored as `max(1, D)`. `wr_write_instruction` hardcodes `D = 0`
+# (write.jac:493 — the parser extracts L and never D), so this currently degrades to "crossed at
+# least once" rather than to "never fires". That is the right failure direction for an emergency,
+# where a single crossing IS the emergency; for persistence "for D days" is the whole content of
+# the finding, and it is under-testing the rule until #4 parses a duration. Raised on #4.
+def rd_threshold_dates(c: Constraint, a: Anchor) -> list[str] {
+    hits: list[Observation] = rd_crossings(c, a);
+    dates: list[str] = rd_distinct_dates(hits);
+    need: int = c.threshold_days if c.threshold_days > 1 else 1;
+    if len(dates) < need {
+        return [];
+    }
+    return dates;
+}
+
+
 # ==========================================================================================
 # Mechanism 1 helpers (#10) — active regimen, `Member` reads, the triangle
 # ==========================================================================================
@@ -409,11 +434,11 @@ walker:pub Recall {
 
             for a in targets {
                 hits: list[Observation] = rd_crossings(c, a);
-                dates: list[str] = rd_distinct_dates(hits);
-                # `threshold_days` honored where parsed; the emergency case is 0, because a single
-                # crossing IS the emergency. The D-day persistence window belongs to #12.
-                need: int = c.threshold_days if c.threshold_days > 1 else 1;
-                if len(dates) < need {
+                # Extracted to `rd_threshold_dates` in #12 so `persistence` cannot drift from this.
+                # Behaviour is unchanged: `threshold_days` honored where parsed, and the emergency
+                # case is 0 because a single crossing IS the emergency.
+                dates: list[str] = rd_threshold_dates(c, a);
+                if len(dates) == 0 {
                     continue;
                 }
 
@@ -557,6 +582,68 @@ walker:pub Recall {
         # ONCE PER ANCHOR. The `rd_seen_anchors` guard at the top of this ability is what makes
         # the shared symptom of a triangle processed a single time no matter how many arms of it
         # the traversal arrived on.
+
+        # ===== MECHANISM 3 (#12) — accumulated Observation crosses a stated threshold =====
+        # The NON-emergency half. `rd_emergency` takes `emergency == True` at `escalate`; this
+        # takes the rest at `ask`, over the same parsed fields and the same crossing test. Both
+        # call `rd_threshold_dates`, which is the only reason they cannot drift apart.
+        #
+        # ARCHITECTURE §8 lists threshold evaluation among the seven places that must never hold a
+        # `by llm()`. L and D are parsed by #4 from the patient's own instructions and are never
+        # recalled by a model; everything below is arithmetic over what #4 wrote.
+        if here.kind in ["symptom", "lab"] {
+            for c in rd_touching_constraints(here) {
+                # `emergency == True` is `rd_emergency`'s, and it has already run and disengaged if
+                # it fired. Re-emitting it here at `ask` would put the same criterion on the page
+                # twice at two severities.
+                if c.emergency {
+                    continue;
+                }
+                if c.threshold_level <= 0.0 and c.threshold_metric == "" {
+                    # No parsed threshold at all — an ordinary constraint, already channel B's.
+                    continue;
+                }
+
+                dates: list[str] = rd_threshold_dates(c, here);
+                if len(dates) == 0 {
+                    continue;
+                }
+
+                pkey: str = "pers|" + jid(c) + "|" + here.key;
+                if pkey in self.rd_seen_pairs {
+                    continue;
+                }
+                self.rd_seen_pairs.append(pkey);
+
+                cite: list[Utterance] = rd_latest_source(c);
+                if len(cite) == 0 {
+                    self.rd_notes.append(
+                        "uncitable threshold constraint (no DerivedFrom): " + c.claim
+                    );
+                    continue;
+                }
+
+                # `pg_slots` fills `{threshold_source}` from the first AUTHORITY-role utterance and
+                # `{level}` from the most recent Observation among the evidence, so the constraint's
+                # citation leads and the crossings follow.
+                ev: list[str] = [jid(cite[0])];
+                for o in rd_crossings(c, here) {
+                    ev.append(jid(o));
+                }
+
+                self.out.concerns.append(
+                    Concern(
+                        kind="persistence",
+                        anchor=here.key,
+                        evidence=ev,
+                        # EARLIEST qualifying date — "I've reported this at {level} for {days}
+                        # days" is a duration, and it starts when the crossing started.
+                        since=dates[0],
+                        action="ask"
+                    )
+                );
+            }
+        }
 
         # --- additive toxicity: the triangle, and the headline detection -----------------
         # Two prescribers, one shared toxicity, nobody compared them because nobody was in both

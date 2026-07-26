@@ -655,6 +655,120 @@ test "a curated pair with only one side in the regimen raises nothing" {
 
 
 # ==========================================================================================
+# #12 — mechanism 3, `persistence`. ALSO ABOVE THE #9 BLOCK, for the same reason as #10.
+#
+# The non-emergency half of "a stated threshold was crossed". Shares `rd_threshold_dates` with
+# `rd_emergency`, so these tests and the `e*_` ones are pinning one piece of arithmetic from two
+# sides — an emergency at `escalate`, an ordinary instruction at `ask`.
+# ==========================================================================================
+
+# ACCEPTANCE (#12). Note the fixture sets `threshold_days` explicitly: `wr_write_instruction`
+# hardcodes it to 0 (write.jac:493), so on real parsed data this degrades to "crossed at least
+# once". Raised on #4 — the rule is right, the parser does not feed it yet.
+test "a non-emergency threshold crossed for D days produces persistence at ask" {
+    t = "p1_";
+    sym = Anchor(key=t + "mouth-pain", kind="symptom");
+    root ++> sym;
+
+    u = Utterance(
+        text="If the mouth pain stays at 4 or higher for a couple of days, tell me at your visit.",
+        at="2026-02-10",
+        role="oncologist"
+    );
+    root ++> u;
+    c = Constraint(
+        claim="mouth pain at 4+ for two days is worth raising",
+        hard=True,
+        emergency=False,
+        threshold_level=4.0,
+        threshold_days=2,
+        threshold_metric="mouth_pain"
+    );
+    root ++> c;
+    c +>:Governs:+> sym;
+    c +>:DerivedFrom:+> u;
+
+    for d in ["2026-03-01", "2026-03-02"] {
+        o = Observation(metric="mouth_pain", value=5.0, at=d);
+        root ++> o;
+        o +>:Reports:+> sym;
+    }
+
+    r = root spawn Recall(anchors=[t + "mouth-pain"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    hit = None;
+    for con in v.concerns {
+        if con.kind == "persistence" and con.anchor == t + "mouth-pain" { hit = con; }
+    }
+    assert hit is not None, f"expected a persistence Concern, got {v.concerns}";
+    assert hit.action == "ask", "CONTRACTS §3 ceiling — never escalate, that is S6's carve-out";
+    assert hit.since == "2026-03-01", "since is the EARLIEST qualifying date — it is a duration";
+    # The constraint's citation leads so `{threshold_source}` resolves; crossings follow so
+    # `{days}` and `{level}` do.
+    assert hit.evidence[0] == jid(u), "evidence[0] is the instruction that set the threshold";
+    assert len(hit.evidence) == 3, f"one citation + two crossings, got {len(hit.evidence)}";
+}
+
+
+# One criterion, one severity. An emergency constraint is `rd_emergency`'s alone — emitting it here
+# too would put the same sentence on the page twice, once as a full-screen interstitial and once as
+# an ordinary row.
+test "an emergency constraint does not also emit persistence" {
+    t = "p2_";
+    sym = Anchor(key=t + "fever", kind="symptom");
+    root ++> sym;
+    u = Utterance(text="Call if your temperature goes over 100.4.", at="2026-02-01", role="oncologist");
+    root ++> u;
+    c = Constraint(
+        claim="fever over 100.4 is a reason to call", hard=True, emergency=True,
+        threshold_level=100.4, threshold_days=0, threshold_metric="fever"
+    );
+    root ++> c;
+    c +>:Governs:+> sym;
+    c +>:DerivedFrom:+> u;
+
+    # Deliberately BELOW the threshold, so `rd_emergency` does not fire and disengage — this test
+    # has to reach the persistence block to prove that the block skips it.
+    o = Observation(metric="fever", value=99.1, at="2026-03-01");
+    root ++> o;
+    o +>:Reports:+> sym;
+
+    r = root spawn Recall(anchors=[t + "fever"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+    for con in v.concerns {
+        assert con.kind != "persistence", "an emergency criterion belongs to rd_emergency alone";
+    }
+}
+
+
+# A constraint with no parsed threshold is an ordinary channel B hit and nothing more. Without
+# this guard every plain instruction becomes a persistence row the moment any observation exists.
+test "a constraint with no parsed threshold emits no persistence" {
+    t = "p3_";
+    sym = Anchor(key=t + "nausea", kind="symptom");
+    root ++> sym;
+    u = Utterance(text="Let me know if the nausea gets worse.", at="2026-02-05", role="oncologist");
+    root ++> u;
+    c = Constraint(claim="report worsening nausea", hard=False, emergency=False);
+    root ++> c;
+    c +>:Governs:+> sym;
+    c +>:DerivedFrom:+> u;
+
+    o = Observation(metric="nausea", value=7.0, at="2026-03-05");
+    root ++> o;
+    o +>:Reports:+> sym;
+
+    r = root spawn Recall(anchors=[t + "nausea"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+    for con in v.concerns {
+        assert con.kind != "persistence", "no L and no metric is not a threshold";
+    }
+    assert len(v.violations) == 1, "channel B still returns it, unscored — A2";
+}
+
+
+# ==========================================================================================
 # #9 — the emergency bypass. EVERYTHING BELOW IS ORDER-SENSITIVE; see note 3 in the header.
 # Non-firing fixtures first (e1–e5), firing fixtures last (e6–e8).
 # ==========================================================================================
