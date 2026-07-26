@@ -1,0 +1,22 @@
+# Jac persisted graph — corrupts on archetype change; never commit
+.jac/
+*.jir
+
+# Client build artifacts
+node_modules/
+dist/
+.vite/
+
+# Env
+.env
+.env.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Python bytecode (Jac imports Python libs)
+__pycache__/
+*.py[cod]
