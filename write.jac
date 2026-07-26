@@ -51,6 +51,8 @@ glob VOCAB_ANCHORS: list[dict] = [
     {"key": "levofloxacin",          "kind": "ingredient"},  // urgent care: fluoroquinolone, QT-prolonging
     {"key": "naproxen",              "kind": "ingredient"},  // NSAID
     {"key": "ibuprofen",             "kind": "ingredient"},  // NSAID
+    {"key": "docusate",              "kind": "ingredient"},  // #7 seed: supportive-care drug with
+                                                              // deliberately zero adherence record
 
     // ingredient — added for #3's curated interaction pairs (recognizable archetypes plus the
     // St John's Wort / CYP3A4-induction demo path)
@@ -384,10 +386,63 @@ def:pub wr_parse_instruction(text: str) -> dict {
 }
 // ===== END INGEST =====
 
-// ===== SEED — Issue #7, not started. Blocked by #1, #2, #4. =====
-// 3 weeks of check-ins, 4-6 ingredient anchors from two prescribers, the adversarial QT
-// convergence (sinus-infection check-in, shared symptom anchor two Member hops out, no lexical
-// overlap between input text and the constraint it corroborates).
+// ===== SEED — Issue #7 =====
+//
+// One synthetic patient, three weeks, hand-built (not extracted live). This is the narrative
+// content only — (at, role, text) triples, exactly the `str` shape `Remember` takes as input
+// (CONTRACTS.md §4). Turning this into a loaded graph means running each entry through
+// `Remember` once #1 and #5 exist; `DEMO_MODE` fixtures (#25) key off this exact text and can't
+// be written until Remember's real `by llm()` #1 output shape exists to key against.
+//
+// Four ingredient anchors from two prescriber contexts, both parseable by INGEST above:
+// imatinib, ondansetron, docusate (oncologist-instructed) and levofloxacin (patient-reported,
+// from an urgent-care visit outside the graph's authority — S1: the graph never originates a
+// clinical fact, so this enters as a patient utterance like everything else self-reported).
+//
+// Required elements, one per entry below:
+//   - #1 loop-closure + hard-constraint-eligible instruction (oncologist role, fever threshold)
+//   - #2 timing instruction (oncologist role)
+//   - #3 a regimen anchor seeded with zero adherence record anywhere else in the corpus
+//   - #8 the adversarial case: sinus-infection check-in, names Levaquin (brand -> levofloxacin),
+//     zero lexical overlap with "QT"/"heart"/"ondansetron" — the shared qt_prolongation anchor is
+//     two Member hops from levofloxacin and two from ondansetron, reachable only by traversal
+//   - #6 -> #7 a 4-day observation gap (2026-06-04 -> 2026-06-08) for the `silence` mechanism
+//   - #9 a symptom (diarrhea) with no Member(toxicity_of) edge from any active drug in this
+//     vocabulary — the `unattributed_symptom` absence-class case
+//   - #10 a cost-related nonadherence utterance — distinct from #3's silent absence: this one is
+//     an explicit stated cause, for `nonadherence_cause`
+
+glob SEED_CHECKINS: list[dict] = [
+    {"at": "2026-06-01", "role": "oncologist",
+     "text": "Take Gleevec at the same time every day, and call the clinic immediately if your temperature goes over 100.4."},
+    {"at": "2026-06-01", "role": "oncologist",
+     "text": "Take Zofran within 30 minutes before food if the nausea is bad."},
+    {"at": "2026-06-01", "role": "oncologist",
+     "text": "Also take docusate daily for constipation prevention."},
+    {"at": "2026-06-02", "role": "patient",
+     "text": "Started the new medication today, feeling okay so far."},
+    {"at": "2026-06-03", "role": "patient",
+     "text": "Some nausea after breakfast, took the Zofran like they said."},
+    {"at": "2026-06-04", "role": "patient",
+     "text": "Nausea again this morning, not too bad."},
+    // -- 4-day observation gap: no entries 2026-06-05 through 2026-06-07 --
+    {"at": "2026-06-08", "role": "patient",
+     "text": "Feeling okay, no complaints today."},
+    {"at": "2026-06-11", "role": "patient",
+     "text": "Went to urgent care for a sinus infection and started Levaquin."},
+    {"at": "2026-06-13", "role": "patient",
+     "text": "Some loose stools the last couple days, not sure why."},
+    {"at": "2026-06-15", "role": "patient",
+     "text": "Skipped my Gleevec refill this week, it's expensive and I couldn't get to the pharmacy in time."},
+    {"at": "2026-06-18", "role": "patient",
+     "text": "Still feeling tired but otherwise okay."},
+    {"at": "2026-06-21", "role": "patient",
+     "text": "Finished the antibiotic course, sinus infection cleared up."},
+];
+
+with entry {
+    print(f"seed: {len(SEED_CHECKINS)} check-ins, {SEED_CHECKINS[0]['at']} to {SEED_CHECKINS[-1]['at']}");
+}
 // ===== END SEED =====
 
 // ===== REMEMBER walker — Issue #5, by llm() site #1. Not started. Blocked by #1, #2. =====
