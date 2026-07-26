@@ -15,7 +15,7 @@
 # Section order mirrors the merge order in CONTRACTS.md §1a: globs -> write walkers.
 
 import re;
-import from graph { Anchor, Member }
+import from graph { Anchor, Member, Utterance, Belief, Constraint, DerivedFrom, About, Governs }
 
 # ===== VOCABULARY — Issue #2 =====
 #
@@ -361,7 +361,7 @@ def wr_parse_regimen(text: str) -> dict {
 # the text doesn't carry a comparable threshold — that's a timing instruction, or unstructured.
 def wr_parse_threshold(text: str) -> dict {
     m: any = re.search(
-        r"(?i)\b(fever|temperature|pain|nausea)\b.*?\b(?:over|above|greater than|>)\s*([\d.]+)",
+        r"(?i)\b(fever|temperature|pain|nausea)\b.*?\b(?:over|above|greater than|>)\s*(\d+(?:\.\d+)?)",
         text
     );
     if not m {
@@ -428,6 +428,71 @@ def wr_parse_instruction(text: str) -> dict {
     }
 
     return {"kind": "unstructured", "raw": text, "is_emergency": is_emergency};
+}
+
+# Ground-truth lookup by key. Anchors are never created here (A1) — wr_seed_vocabulary is the
+# only constructor. A miss returns None, same "no invented anchor" discipline as everywhere else.
+def wr_find_anchor(at_root: Root, key: str) -> Anchor | None {
+    anchors: list[Anchor] = [at_root -->][?:Anchor];
+    for a in anchors {
+        if a.key == key {
+            return a;
+        }
+    }
+    return None;
+}
+
+# Writes one Belief per recognized ingredient in a pasted regimen list, About the matching
+# vocabulary Anchor (must already exist — wr_seed_vocabulary runs first) and DerivedFrom the
+# source Utterance. A1: unrecognized lines are NOT written as Beliefs here — surfacing an
+# unrecognized substance as Concern(kind="unrecognized_substance") is read.jac's job; this
+# function only reports which raw lines need that treatment.
+def wr_write_regimen(at_root: Root, source: Utterance, regimen_text: str) -> dict {
+    parsed: dict = wr_parse_regimen(regimen_text);
+    written: list[Belief] = [];
+    parsed_anchors: list[dict] = list(parsed["anchors"]);
+    for a in parsed_anchors {
+        key: str = str(a["key"]);
+        anchor: Anchor | None = wr_find_anchor(at_root, key);
+        if anchor is not None {
+            b = (at_root ++> Belief(claim="on " + key))[0];
+            b +>:DerivedFrom():+> source;
+            b +>:About(weight=1.0):+> anchor;
+            written.append(b);
+        }
+    }
+    return {"written_count": len(written), "needs_review": parsed["needs_review"]};
+}
+
+# Writes a Constraint for one parsed threshold instruction, Governs the named symptom Anchor,
+# DerivedFrom the source Utterance. Severity typing is the provenance read from CONTRACTS.md §2:
+# hard is True only if source.role is oncologist/pharmacist/label — never a by llm() judgment.
+# Returns None for timing/unstructured instructions or an unresolved metric — nothing invented.
+def wr_write_instruction(at_root: Root, source: Utterance, instruction_text: str) -> Constraint | None {
+    parsed: dict = wr_parse_instruction(instruction_text);
+    if str(parsed["kind"]) != "threshold" {
+        return None;
+    }
+    anchor_key: str = str(parsed["anchor_key"]);
+    if anchor_key == "" {
+        return None;
+    }
+    anchor: Anchor | None = wr_find_anchor(at_root, anchor_key);
+    if anchor is None {
+        return None;
+    }
+    hard: bool = source.role == "oncologist" or source.role == "pharmacist" or source.role == "label";
+    c = (at_root ++> Constraint(
+        claim=instruction_text,
+        hard=hard,
+        emergency=bool(parsed["is_emergency"]),
+        threshold_level=float(str(parsed["threshold"])),
+        threshold_days=0,
+        threshold_metric=anchor_key
+    ))[0];
+    c +>:DerivedFrom():+> source;
+    c +>:Governs():+> anchor;
+    return c;
 }
 # ===== END INGEST =====
 
