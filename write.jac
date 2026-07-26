@@ -15,7 +15,10 @@
 # Section order mirrors the merge order in CONTRACTS.md §1a: globs -> write walkers.
 
 import re;
-import from graph { Anchor, Member, Utterance, Belief, Constraint, DerivedFrom, About, Governs }
+import os;
+import from byllm.lib { MockLLM }
+import from graph { Anchor, Member, Utterance, Observation, Belief, Constraint, Verdict, Concern,
+                     DerivedFrom, About, Governs }
 
 # ===== VOCABULARY — Issue #2 =====
 #
@@ -562,11 +565,6 @@ with entry {
 # DerivedFrom/About. Severity typing is a provenance read off Utterance.role — never a by llm()
 # judgment.
 #
-# The walker body is blocked by #1 (`Utterance`/`Observation`/`Belief`/`Anchor` +
-# `DerivedFrom`/`About` from graph.jac) and #29 (`Verdict` for `has out`). What has no graph
-# dependency — the `by llm()` #1 output schema, and the A1 guard that reads it — is below,
-# ready for the walker to call the moment #1 lands.
-#
 # **A1 boundary, made structural by this split:** the LLM's job stops at "what kind of
 # statement is this, and what free-text substance/metric did it name." It never decides whether
 # that name is real — `wr_check_extraction` re-resolves every name through VOCAB_ANCHORS
@@ -594,14 +592,35 @@ obj ExtractionResult {
     has beliefs: list[ExtractedBelief] = [];
 }
 
+# A substance a patient mentions in free text can be a medication OR a food (grapefruit is the
+# canonical case — ARCHITECTURE.md §3's own example). wr_resolve_ingredient alone is too narrow
+# for extraction, unlike regimen parsing where only actual medication lines are expected.
+def wr_resolve_substance(raw: str) -> str {
+    ingredient_key: str = wr_resolve_ingredient(raw);
+    if ingredient_key != "" {
+        return ingredient_key;
+    }
+    name: str = wr_strip_dose(raw).lower();
+    known_foods: list[str] = [];
+    for a in VOCAB_ANCHORS {
+        if a["kind"] == "food" {
+            known_foods.append(str(a["key"]));
+        }
+    }
+    if name in known_foods {
+        return name;
+    }
+    return "";
+}
+
 # A1 guard, run once per extracted belief that names a substance. Reuses the same vocabulary
-# lookups as INGEST (wr_resolve_ingredient) so "my neighbor gave me St John's Wort" and a pasted
-# regimen line resolve identically — one vocabulary, two entry points.
+# lookup as INGEST so "my neighbor gave me St John's Wort" and a pasted regimen line resolve
+# identically — one vocabulary, two entry points.
 def wr_check_extraction(belief: ExtractedBelief) -> dict {
     if belief.substance == "" {
         return {"needs_review": False, "anchor_key": ""};
     }
-    key: str = wr_resolve_ingredient(belief.substance);
+    key: str = wr_resolve_substance(belief.substance);
     if key != "" {
         return {"needs_review": False, "anchor_key": key};
     }
@@ -609,6 +628,80 @@ def wr_check_extraction(belief: ExtractedBelief) -> dict {
     # needs_review = True and reports Concern(kind="unrecognized_substance") — never "safe"
     # per S3, the page says "not in your record".
     return {"needs_review": True, "anchor_key": ""};
+}
+
+# MockLLM-first per Nathan's #27 findings: no provider key exists in this environment and
+# platform credits don't cover app-level by llm() calls, so DEMO_MODE isn't a later convenience
+# here — it's the only path that runs at all right now. This glob is the plumbing proof (spike/
+# graph.jac's exact pattern); real per-utterance DEMO_MODE fixtures are #25, keyed off
+# SEED_CHECKINS text, once this shape is confirmed against a live provider.
+glob llm = MockLLM(
+    model_name="mockllm",
+    config={"outputs": [ExtractionResult(
+        observation=ExtractedObservation(present=True, metric="nausea", value=1.0),
+        beliefs=[
+            ExtractedBelief(kind="preference", claim="mentioned nausea", substance="", polarity=0.0),
+            ExtractedBelief(kind="constraint", claim="my neighbor gave me a herbal remedy", substance="herbal remedy", polarity=0.0),
+        ]
+    )]}
+);
+
+def wr_extract(text: str) -> ExtractionResult by llm();
+sem wr_extract = "Extract a typed belief and, if present, a symptom observation from the patient's free-text check-in. Identify any medication or supplement name mentioned verbatim, even if unfamiliar, as ExtractedBelief.substance.";
+sem wr_extract.text = "The patient's raw check-in sentence.";
+
+walker:pub Remember {
+    has text: str;
+    has role: str;
+    has at: str;
+    has out: Verdict = Verdict();
+
+    can go with Root entry {
+        utt = (here ++> Utterance(text=self.text, at=self.at, role=self.role))[0];
+
+        extraction: ExtractionResult = wr_extract(self.text);
+
+        if extraction.observation.present {
+            obs = (here ++> Observation(
+                metric=extraction.observation.metric,
+                value=extraction.observation.value,
+                at=self.at
+            ))[0];
+            obs +>:DerivedFrom():+> utt;
+        }
+
+        for belief in extraction.beliefs {
+            guard: dict = wr_check_extraction(belief);
+            needs_review: bool = bool(guard["needs_review"]);
+            anchor_key: str = str(guard["anchor_key"]);
+
+            b = (here ++> Belief(claim=belief.claim, needs_review=needs_review))[0];
+            b +>:DerivedFrom():+> utt;
+
+            if anchor_key != "" {
+                anchor: Anchor | None = wr_find_anchor(here, anchor_key);
+                if anchor is not None {
+                    b +>:About(weight=1.0):+> anchor;
+                }
+            }
+
+            # A9: Remember never reinforces — no strength/uses/last_used write, here or anywhere
+            # else in this ability.
+            if needs_review {
+                self.out.concerns.append(Concern(
+                    kind="unrecognized_substance",
+                    anchor=belief.substance,
+                    evidence=[jid(utt)],
+                    since=self.at,
+                    action="mention"
+                ));
+            }
+        }
+    }
+
+    can emit with Root exit {
+        report self.out;               # one typed object, once, from Root exit (CONTRACTS §4)
+    }
 }
 # ===== END REMEMBER =====
 
