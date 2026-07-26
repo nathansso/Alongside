@@ -15,7 +15,8 @@ breaks at runtime, not at `jac check`.
 
 | Area | Files | Owner |
 |---|---|---|
-| Graph schema | `graph/archetypes.jac` | **one person, frozen after stage 1** |
+| Graph schema — **persisted** | `graph/archetypes.jac` (nodes + edges) | **one person, frozen after stage 1** |
+| Report objects — **transient** | `graph/reports.jac` (objs) | Track 3 leads; **not frozen**, `contract` label to change |
 | Vocabulary | `graph/vocab.jac`, `ingest/regimen.jac` | Track A |
 | Read path | `walkers/recall.jac`, `walkers/investigate.jac` | Track B |
 | Write path | `walkers/remember.jac`, `walkers/consolidate.jac` | Track C |
@@ -23,15 +24,26 @@ breaks at runtime, not at `jac check`.
 | Demo + eval | `seed/patient.jac`, `eval/*`, `DEMO_MODE` branches | Track E |
 | Vertical slice | `main.jac` | **Track D owns it; append only within your own section** |
 
-`graph/archetypes.jac` is the one file everyone depends on and the one file that corrupts the
-persisted graph when edited. **It is frozen after stage 1.** Changes go through an issue labeled
-`schema`, are made by its owner, and are announced — everyone else resets their graph after.
+**The freeze covers persisted archetypes only, and that distinction is load-bearing.**
+
+Only `node` and `edge` archetypes are graph-persisted. Changing one invalidates every existing
+`NodeAnchor` and forces a reset for every collaborator, so `graph/archetypes.jac` is **frozen after
+stage 1**: changes go through an issue labeled `schema`, are made by its owner, are batched, and are
+announced — everyone else resets their graph after.
+
+**`obj` archetypes are transient values** constructed per walker run. Changing `Verdict` or `Row`
+corrupts nothing and requires no reset. They live in `graph/reports.jac`, are **not frozen**, and
+Track 3 may iterate on them as the page teaches us what `Row` actually needs — which it will.
+
+Not frozen is not unowned. Report objs are still pinned below, and changing one needs the `contract`
+label plus an ack, because three tracks build against them.
 
 ---
 
 ## 2. Node and edge schema
 
-Pinned. Source of truth is `ARCHITECTURE.md` section 3; this is the wire-relevant subset.
+**Persisted and frozen.** Lives in `graph/archetypes.jac`, built in #1. Source of truth is
+`ARCHITECTURE.md` section 3; this is the wire-relevant subset.
 
 ```jac
 node Utterance   { has text: str; has at: str; has role: str; }
@@ -63,6 +75,9 @@ set is a safety change, not a schema change.
 ---
 
 ## 3. Report objects
+
+**Transient, not frozen.** Lives in `graph/reports.jac`, built in #29. Safe to iterate; still needs
+the `contract` label to change, because three tracks consume these.
 
 ```jac
 obj Violation { has claim: str; has because: str; has source: str; has at: str; }
