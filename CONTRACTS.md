@@ -140,15 +140,25 @@ engineering, and the deliverable is what gets judged.
 
 ```jac
 node Utterance   { has text: str; has at: str; has role: str; }
-node Anchor      { has key: str; has kind: str; }
-node Observation { has metric: str; has value: float; has at: str; }
+node Anchor      { has key: str; has kind: str;
+                   has cumulative: bool = False; has cycle_days: int = 0; }
+node Observation { has metric: str; has value: float; has at: str;
+                   has scale: str = "patient_selfreport"; }
 node Belief      { has claim: str; has strength: float = 1.0;
-                   has last_used: str; has uses: int = 0;
+                   has last_used: str = ""; has uses: int = 0;
                    has needs_review: bool = False; }
 node Preference(Belief) { has polarity: float = 0.0; }
-node Constraint(Belief) { has hard: bool = True; }
+node Constraint(Belief) { has hard: bool = True; has emergency: bool = False;
+                   has threshold_level: float = 0.0; has threshold_days: int = 0;
+                   has threshold_metric: str = ""; }
 node Raised      { has kind: str; has anchor_key: str; has status: str; has at: str; }
 ```
+
+**Edge changes frozen in #1** (full list in `ARCHITECTURE.md` §3): `DerivedFrom` source is
+`Node --> Utterance` (both `Belief` and `Observation` carry it, per S2); new
+`edge Examined: Belief --> Belief { has at: str; has conflicting: bool = False; }` gives
+`Consolidate` (#6) a per-pair skip-marker. `Belief.last_used` and `Relates.last_used` carry a
+`""` default — a required field cannot follow a defaulted one (Jac `E2004`).
 
 **Field vocabularies — pinned, closed sets:**
 
@@ -159,6 +169,7 @@ node Raised      { has kind: str; has anchor_key: str; has status: str; has at: 
 | `Member.via` | `class_member` · `toxicity_of` |
 | `Raised.status` | `open` · `asked` · `answered` · `dismissed` |
 | `Concern.action` | `escalate` · `ask` · `mention` · `log` |
+| `Observation.scale` | `patient_selfreport` · `ctcae_grade` |
 | `at` (everywhere) | ISO 8601 date string, `YYYY-MM-DD` |
 
 `Utterance.role` is **authority-bearing**: a `Constraint` may be `hard == True` only if its
