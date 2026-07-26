@@ -89,33 +89,40 @@ Signatures are indicative. Section 12 governs syntax pitfalls.
 
 ```jac
 node Utterance   { has text: str; has at: str; has role: str; }
-node Anchor      { has key: str; has kind: str; }
-node Observation { has metric: str; has value: float; has at: str; }
+node Anchor      { has key: str; has kind: str;
+                   has cumulative: bool = False;          # label-marked cumulative toxicity — #12 trajectory
+                   has cycle_days: int = 0; }             # regimen cycle length — #21 phase
+node Observation { has metric: str; has value: float; has at: str;
+                   has scale: str = "patient_selfreport"; }  # patient_selfreport | ctcae_grade
 node Belief      { has claim: str; has strength: float = 1.0;
-                   has last_used: str; has uses: int = 0;
+                   has last_used: str = ""; has uses: int = 0;
                    has needs_review: bool = False; }
 node Preference(Belief) { has polarity: float = 0.0; }   # -1 avoid .. +1 prefer
-node Constraint(Belief) { has hard: bool = True; }
+node Constraint(Belief) { has hard: bool = True; has emergency: bool = False;   # emergency: S5/#9, parsed by #4
+                   has threshold_level: float = 0.0; has threshold_days: int = 0;  # persistence #12
+                   has threshold_metric: str = ""; }
 node Raised      { has kind: str; has anchor_key: str;
                    has status: str; has at: str; }        # open | asked | answered | dismissed
 ```
 
 ```jac
-edge DerivedFrom: Belief      --> Utterance  { }
+edge DerivedFrom: Node        --> Utterance  { }   # Node source: both Belief AND Observation derive from an Utterance
 edge Reports:     Observation --> Anchor     { }
 edge About:       Belief      --> Anchor     { has weight: float = 1.0; }
 edge Relates:     Belief      --> Belief     { has weight: float = 1.0; has co_uses: int = 0;
-                                               has last_used: str; }
+                                               has last_used: str = ""; }
 edge Supersedes:  Belief      --> Belief     { }
 edge Shortcut:    Anchor      --> Belief     { has hops: int = 2; has weight: float = 1.0; }
 edge Governs:     Constraint  --> Anchor     { }
 edge Excludes:    Constraint  --> Anchor     { has because: str; }
 edge Conflicts:   Belief      --> Belief     { has derived_at: str; }
+edge Examined:    Belief      --> Belief     { has at: str; has conflicting: bool = False; }  # Consolidate skip-marker #6
 edge Member:      Anchor      --> Anchor     { has via: str; }
 edge Regarding:   Raised      --> Anchor     { }
 ```
 
-`Observation` also carries a `DerivedFrom` edge to its `Utterance`.
+`Observation` also carries a `DerivedFrom` edge to its `Utterance` — which is why `DerivedFrom`'s
+source is `Node`, not `Belief`.
 
 **Three node layers**, separated so the scored layer can be occluded without touching the others:
 
