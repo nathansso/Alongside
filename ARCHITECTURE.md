@@ -506,24 +506,25 @@ B guarantee. This refusal is deliberate and belongs in the writeup — it is not
 
 Target is a **full-stack Jac web app** running in jachammer, Jaseci Labs' browser-based Jac IDE.
 
-**Verify before writing any code:** does jachammer carry the **`jac-client` plugin**? The
-full-stack kind requires it — `cl { }` blocks, the browser bundle, and generated RPC all come from
-that plugin. If it is absent there is no web UI and no concerns page, and the product surface must
-be rethought. This is the highest-risk unknown in the project and it costs five minutes to check.
+### Confirmed from the jachammer docs
 
-Consequences of the browser-IDE target:
+| Capability | Finding | Consequence for us |
+|---|---|---|
+| **Git** | Every project is a **real git repository** from creation — branches, commits, diffs, **remotes, push/pull**. JacCoder and a human work against the same repo and history. | **The GitHub workflow in `CONTRIBUTING.md` is fully compatible.** Add `origin` in the Git panel and the three-track parallel model works as written. This was the biggest risk to the collaboration plan and it is resolved. |
+| **Environment variables** | Two scopes, project and global. Sourced into the app's own running process for both preview and deploys. Project-level overrides global. | **`DEMO_MODE` has a clean home.** No shell needed, no config file. Set it per-project. |
+| **Deploys** | **Sandbox**: temporary, expires after **7 days**, free on every plan. **Permanent**: no expiry, gets a subdomain, supports a custom domain. Pro allows **15 sandbox + 3 permanent**. | Demo off a sandbox deploy, but **ship the submission link as a permanent deploy** — a sandbox URL dies a week after judging, taking the portfolio link with it. |
+| **Eject** | Projects are git-backed and ejectable to standalone code. Nothing is hidden or locked away. | No lock-in risk. The repo remains the source of truth. |
+| **Client UI** | Building and deploying web apps served at a subdomain is the core product use case. | The `cl { }` layer is available. The concerns page is buildable. |
+
+### Still unresolved
 
 | Constraint | Effect |
 |---|---|
-| **No shell** | The `rm -rf .jac/data/` recovery reflex has no equivalent. We edit archetypes often, so **find jachammer's graph-reset mechanism before stage 1**, or this stops the build cold at an unpredictable moment. |
-| **No filesystem** | The vocabulary must be an inline `glob` in Jac. `data/*.json` cannot exist. This is a requirement, not a preference — and it leaves the repo with **zero non-Jac artifacts**. |
+| **Graph reset with no shell** | The `rm -rf .jac/data/` recovery reflex has no documented equivalent, and archetype edits corrupt the persisted graph. **Find the reset path before stage 1** — this is now the top remaining build risk. Checkpoints and version history may cover it; confirm. |
+| **No filesystem** | The vocabulary must be an inline `glob` in Jac. `data/*.json` cannot exist. A requirement, not a preference — and it leaves the repo with **zero non-Jac artifacts**. |
 | **No local CLI** | `jac browse` (headless QA driver) is unavailable. UI verification is manual in the preview pane. Budget for it. |
 | **npm deps uncertain** | Tailwind / shadcn need package installs. Assume inline CSS until proven otherwise — which also makes the single-file claim cleaner. |
-| **State may reset between previews** | The seed graph is built at startup by design, so it survives. `Raised` status and the loop closure would not. Another reason status is the correct day-one cut. |
-
-**Open, depends on the above:** if jachammer's preview does a full rebuild regardless, the HMR
-advantage of keeping UI in `.cl.jac` files evaporates, and the case for putting *more* into
-`main.jac` gets stronger — possibly the whole app. Decide after checking.
+| **Preview reload behavior** | If the preview does a full rebuild regardless, the HMR advantage of keeping UI in `.cl.jac` files evaporates and the case for collapsing more into `main.jac` gets stronger. Decide after the first preview run. |
 
 No scheduler, cron, or background sweep is available or needed. `Vigil` on app open is the trigger.
 
