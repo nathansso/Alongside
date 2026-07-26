@@ -50,9 +50,25 @@ glob VOCAB_ANCHORS: list[dict] = [
     {"key": "naproxen",              "kind": "ingredient"},  // NSAID
     {"key": "ibuprofen",             "kind": "ingredient"},  // NSAID
 
+    // ingredient — added for #3's curated interaction pairs (recognizable archetypes plus the
+    // St John's Wort / CYP3A4-induction demo path)
+    {"key": "st_johns_wort", "kind": "ingredient"},  // herbal supplement, CYP3A4 inducer
+    {"key": "warfarin",      "kind": "ingredient"},
+    {"key": "methotrexate",  "kind": "ingredient"},
+    {"key": "tamoxifen",     "kind": "ingredient"},
+    {"key": "paroxetine",    "kind": "ingredient"},
+    {"key": "azathioprine",  "kind": "ingredient"},
+    {"key": "allopurinol",   "kind": "ingredient"},
+    {"key": "capecitabine",  "kind": "ingredient"},
+
     // class — ATC / EPC
     {"key": "CYP3A4-substrate", "kind": "class"},
     {"key": "CYP3A4-inhibitor", "kind": "class"},
+    {"key": "CYP3A4-inducer",   "kind": "class"},  // #3: opposite effect from CYP3A4-inhibitor —
+                                                    // lowers substrate levels, not an additive-
+                                                    // toxicity relationship, so it is NOT wired
+                                                    // with Member(toxicity_of) like the inhibitor
+                                                    // class. See INTERACTION TABLE below.
     {"key": "QT-prolonging",    "kind": "class"},
     {"key": "NSAID",            "kind": "class"},
 
@@ -76,6 +92,12 @@ glob VOCAB_MEMBERS: list[dict] = [
     {"frm": "imatinib",         "to": "CYP3A4-substrate", "via": "class_member"},
     {"frm": "CYP3A4-inhibitor", "to": "CYP3A4-substrate", "via": "toxicity_of"},
 
+    // St John's Wort is a class_member of CYP3A4-inducer like any other vocabulary fact. The
+    // inducer -> substrate link itself is a curated Excludes-style pair (INTERACTION TABLE
+    // below), not a Member(toxicity_of) edge — induction is an efficacy-loss mechanism, not an
+    // additive-toxicity one, so it doesn't belong in this glob.
+    {"frm": "st_johns_wort", "to": "CYP3A4-inducer", "via": "class_member"},
+
     // the QT convergence — two prescribers, one shared toxicity anchor, demo beat 3
     {"frm": "ondansetron",   "to": "QT-prolonging",   "via": "class_member"},
     {"frm": "levofloxacin",  "to": "QT-prolonging",   "via": "class_member"},
@@ -92,8 +114,101 @@ with entry {
 }
 // ===== END VOCABULARY =====
 
-// ===== INTERACTION TABLE — Issue #3, not started. Blocked by #1. =====
-// Curated Excludes pairs. Cite a source per pair; state the pair count (ARCHITECTURE.md §16).
+// ===== INTERACTION TABLE — Issue #3 =====
+//
+// NLM retired the RxNav drug-interaction API in early 2024 (ARCHITECTURE.md §16); this is a
+// hand-curated table of oncology-relevant pairs sourced from FDA labels, inlined as a `glob`.
+// Every pair has a non-empty `source` and a `because` reason string — `because` is what
+// `Excludes.because` carries onto the page (S2: no source, no verdict).
+//
+// **Citations are label-section descriptions, not verified URLs or edition numbers.** The
+// underlying interactions are well-documented pharmacology; the exact citation text should still
+// be spot-checked against the primary label before anything here is quoted in the pitch
+// (ARCHITECTURE.md §16 makes the same demand of the Basch citation).
+//
+// Same stub-first deferral as VOCABULARY above: this is (a, b, because, source) data only. Each
+// pair's `a`/`b` may be a specific ingredient key or a class key — Member(class_member) expansion
+// (vocabulary, above) is what lets a class-level pair cover every drug in that class. No
+// `Constraint`/`Excludes` construction happens here; that's wired once a patient's regimen (#4,
+// #7) actually contains both sides of a pair.
+//
+// Distinct from Member(toxicity_of) above: that glob encodes additive-toxicity convergence
+// (two classes independently raising the same risk). This table encodes explicit, one-off,
+// label-documented contraindications and efficacy-loss interactions — including ones that would
+// never be additive-toxicity pairs, like CYP3A4 induction lowering a substrate's plasma level.
+// Both funnel into Concern.kind="interaction" (CONTRACTS.md §3, mechanism 1, ceiling `ask`).
+
+glob INTERACTION_TABLE: list[dict] = [
+    {
+        "a": "CYP3A4-inducer", "b": "CYP3A4-substrate",
+        "because": "CYP3A4 induction lowers substrate plasma levels, risking loss of efficacy",
+        "source": "Gleevec (imatinib) FDA label, Drug Interactions — CYP3A4 inducers",
+    },
+    {
+        "a": "warfarin", "b": "naproxen",
+        "because": "additive bleeding risk: NSAIDs impair platelet function on top of anticoagulation",
+        "source": "Warfarin (Coumadin) FDA label, Drug Interactions — NSAIDs",
+    },
+    {
+        "a": "warfarin", "b": "ibuprofen",
+        "because": "additive bleeding risk: NSAIDs impair platelet function on top of anticoagulation",
+        "source": "Warfarin (Coumadin) FDA label, Drug Interactions — NSAIDs",
+    },
+    {
+        "a": "warfarin", "b": "levofloxacin",
+        "because": "fluoroquinolones can potentiate warfarin's anticoagulant effect, raising INR",
+        "source": "Levofloxacin FDA label, Drug Interactions — Warfarin",
+    },
+    {
+        "a": "methotrexate", "b": "naproxen",
+        "because": "NSAIDs reduce renal methotrexate clearance, raising toxicity risk",
+        "source": "Methotrexate FDA label, Drug Interactions — NSAIDs",
+    },
+    {
+        "a": "methotrexate", "b": "ibuprofen",
+        "because": "NSAIDs reduce renal methotrexate clearance, raising toxicity risk",
+        "source": "Methotrexate FDA label, Drug Interactions — NSAIDs",
+    },
+    {
+        "a": "methotrexate", "b": "alcohol",
+        "because": "alcohol increases risk of methotrexate-associated hepatotoxicity",
+        "source": "Methotrexate FDA label, Warnings and Precautions — Hepatotoxicity",
+    },
+    {
+        "a": "tamoxifen", "b": "paroxetine",
+        "because": "potent CYP2D6 inhibition blocks conversion to endoxifen, tamoxifen's active metabolite, reducing efficacy",
+        "source": "Tamoxifen FDA label, Drug Interactions — CYP2D6 inhibitors",
+    },
+    {
+        "a": "tamoxifen", "b": "warfarin",
+        "because": "tamoxifen potentiates warfarin's anticoagulant effect, raising bleeding risk",
+        "source": "Tamoxifen FDA label, Drug Interactions — Coumarin anticoagulants",
+    },
+    {
+        "a": "azathioprine", "b": "allopurinol",
+        "because": "allopurinol blocks the enzyme that clears azathioprine's active metabolite, causing severe myelosuppression",
+        "source": "Azathioprine (Imuran) FDA label, Drug Interactions — Allopurinol",
+    },
+    {
+        "a": "capecitabine", "b": "warfarin",
+        "because": "capecitabine potentiates warfarin, raising INR and bleeding risk, sometimes with delayed onset",
+        "source": "Capecitabine (Xeloda) FDA label, Drug Interactions — Coumarin anticoagulants",
+    },
+    {
+        "a": "imatinib", "b": "warfarin",
+        "because": "imatinib may potentiate warfarin; low-molecular-weight heparin is often used instead",
+        "source": "Gleevec (imatinib) FDA label, Drug Interactions — Warfarin",
+    },
+    {
+        "a": "levofloxacin", "b": "calcium",
+        "because": "divalent cations chelate fluoroquinolones in the gut, reducing absorption and efficacy — separate dosing by several hours",
+        "source": "Levofloxacin FDA label, Drug Interactions — Multivalent cation-containing products",
+    },
+];
+
+with entry {
+    print(f"interaction table: {len(INTERACTION_TABLE)} pairs");
+}
 // ===== END INTERACTION TABLE =====
 
 // ===== INGEST — Issue #4, not started. Blocked by #1, #2. =====
