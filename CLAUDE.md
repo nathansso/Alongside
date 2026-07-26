@@ -105,7 +105,8 @@ stale line — a conventional type-checker sees nothing across that seam.
 
 - **Editing archetypes corrupts the persisted graph.** Changing a node or edge definition between
   runs gives `NodeAnchor ... is not a valid reference!`. Locally the reflex is `rm -rf .jac/data/`.
-  **On jachammer there is no shell — find the reset mechanism before stage 1.**
+  **On jachammer there is no shell.** The reset path is being established in issue #27 — check that
+  issue for the answer, and if it is still open, do not start schema work.
 - **Edge abilities are a silent no-op.** `can ... with Walker entry` inside an `edge` compiles clean
   and never fires. All scoring lives in walker node abilities reading `[edge ...]`.
 - **`++>` returns a list.** `b = (anchor ++> Belief(claim=c))[0];`. A missing `[0]` fails somewhere
@@ -120,6 +121,21 @@ stale line — a conventional type-checker sees nothing across that seam.
   `jac check` and fail later.
 - **Walker `has` state is global to the walker, not per-branch.** Memoize per node in a dict;
   decaying a walker field directly corrupts across branches.
+
+## Using jachammer
+
+The deployment target is a browser IDE. Confirmed from its docs, see `ARCHITECTURE.md` section 9:
+
+- **Every project is a real git repository** — branches, commits, remotes, push/pull. You and
+  JacCoder work against the same history. Work against the GitHub remote, not a separate copy.
+- **Config goes in environment variables**, project or global scope, sourced into the app's running
+  process for preview and deploys. `DEMO_MODE` is a **project-scoped** variable. There is no shell,
+  so there is nowhere else to put it.
+- **Sandbox deploys expire after 7 days.** The submission link must be a permanent deploy (#28).
+- **No `jac browse`.** UI verification is manual in the preview pane. Do not write acceptance checks
+  that assume a headless driver.
+- **Assume npm installs are unavailable** until #27 says otherwise. Inline CSS, no Tailwind or
+  shadcn.
 
 ## Conventions
 
