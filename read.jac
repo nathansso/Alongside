@@ -4,9 +4,9 @@
 # `main.jac` exist. Every private helper is prefixed `rd_` (discipline 1) so the collapse into
 # `main.jac` at submission is a concatenation with no rename.
 #
-# Contents today: `Recall` channel B (#8), the emergency bypass (#9), and detection mechanism 1
-# (#10). Channel A (#15), mechanisms 2–4 (#11, #12), corroboration (#13), `Vigil` (#21), and
-# `Investigate` (#14) land in later issues.
+# Contents today: `Recall` channel B (#8), the emergency bypass (#9), all four detection
+# mechanisms (#10, #11, #12), corroboration (#13), and `Investigate` (#14). Channel A (#15) and
+# `Vigil` (#21) land in later issues.
 #
 # INVARIANTS THIS FILE IS ACCOUNTABLE FOR
 #   A2  channel B is unscored, unpruned, and exempt from beam, budget, decay, and waterline.
@@ -20,18 +20,65 @@
 #       `obj Violation` has no defaults, so this is structural, not a runtime check.
 #   S5  emergency criteria are evaluated BEFORE scoring, drafting, or beam. Implemented as
 #       ability declaration order — see the warning on `rd_emergency`.
-#   S6  mechanism 1 emits at `ask` and never above. `escalate` is reachable from exactly one
-#       place in this file, `rd_emergency`.
+#   S3  absence yields "not in your record", never "safe". Mechanism 2 (#11) is this invariant
+#       made operational — the whole class exists so that a gap is a finding, not a silence.
+#   S4  `trajectory` (#12) is where dose concern legitimately lives, and the output is "worth
+#       raising at the next visit, here is the record". No dosing conclusion, ever.
+#   S6  no detection mechanism emits above its per-kind ceiling (`RD_CEILINGS`), and corroboration
+#       (#13) promotes only up to it. `escalate` is reachable from exactly one place in this
+#       file, `rd_emergency`.
+#   A5  corroboration PROMOTES ONLY. There is no code path in this file that lowers an `action`.
 #
 # `Recall` contains no `while` loop. Policy lives on node-type abilities and the visit queue.
 
 # The EDGE archetypes have to be imported alongside the nodes. Without them every typed traversal
 # below infers `any` — and because the locals here are annotated, that surfaces as five E1001s
 # instead of passing `jac check` and dying at the first field read. Import the edges you traverse.
+import datetime;
+
 import from graph {
-    Anchor, Belief, Concern, Constraint, Observation, Preference, Utterance, Verdict, Violation,
-    About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
+    Anchor, Belief, CaseFile, Concern, Constraint, Observation, Preference, TimelineEntry,
+    Utterance, Verdict, Violation,
+    About, Conflicts, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
 }
+
+
+# ==========================================================================================
+# Severity ladder and per-kind ceilings — CONTRACTS §3, ARCHITECTURE §6
+# ==========================================================================================
+#
+# The ladder as an ordered list, so "one rung up" is an index step and cannot be fat-fingered into
+# a two-rung jump. Corroboration (#13) is the only thing that moves a concern along it.
+glob RD_LADDER: list[str] = ["log", "mention", "ask", "escalate"];
+
+# THE CEILING TABLE IS A SAFETY SURFACE, not a lookup convenience. CONTRACTS §3 pins every one of
+# these, and "ceiling is a hard cap, not a default" — corroboration may promote up to the value
+# here and no further. A kind missing from this table is treated as capped at `mention`, which is
+# the conservative direction: a new kind cannot reach the top of the page by being forgotten.
+glob RD_CEILINGS: dict[str, str] = {
+    "interaction": "ask",
+    "additive_toxicity": "ask",
+    "unattributed_symptom": "mention",
+    "supportive_care_gap": "mention",
+    "adherence_gap": "mention",
+    "silence": "mention",
+    "persistence": "ask",
+    "trajectory": "mention",
+    "emergency": "escalate",
+    "instruction_drift": "mention",
+    "cross_prescriber_conflict": "ask",
+    "nonadherence_cause": "mention",
+    "unrecognized_substance": "mention",
+};
+
+# Days without an `Observation` referencing a regimen anchor before it counts as an adherence gap
+# (#11). A module constant rather than a walker field: `Recall`'s signature is pinned by
+# CONTRACTS §4 and this is not worth widening it for.
+glob RD_ADHERENCE_DAYS: int = 7;
+
+# Days between consecutive patient check-ins before the gap is `silence` (#11). The seeded gap is
+# 2026-06-04 -> 2026-06-08, so anything above 4 would miss the case the corpus was built for.
+glob RD_SILENCE_DAYS: int = 3;
 
 
 # ==========================================================================================
@@ -45,7 +92,12 @@ import from graph {
 # 0-or-1 list rather than `Utterance | None` on purpose — an optional here forces every caller
 # through a narrowing dance to touch `.at`, and an empty list is the same "no citation" signal
 # with none of the friction. An empty return is S2's trigger, handled by the caller.
-def rd_latest_source(b: Belief) -> list[Utterance] {
+#
+# Typed `Node`, not `Belief`, since #11: graph.jac deliberately broadened `DerivedFrom` to
+# `Node --> Utterance` because BOTH `Belief` and `Observation` carry it (S2), and
+# `unattributed_symptom` needs an observation's citation. A `Belief`-typed parameter here
+# reproduces exactly the mistype that comment warns about, one call site further out.
+def rd_latest_source(b: Node) -> list[Utterance] {
     srcs: list[Utterance] = [b ->:DerivedFrom:->];
     if len(srcs) == 0 {
         return [];
@@ -140,6 +192,154 @@ def rd_threshold_dates(c: Constraint, a: Anchor) -> list[str] {
         return [];
     }
     return dates;
+}
+
+
+# ==========================================================================================
+# Mechanism 2/3/4 helpers (#11, #12) — dates, observation chains, conflicts
+# ==========================================================================================
+
+# Whole days between two ISO dates, or 0 if either is unparseable. Every gap in mechanism 2 is a
+# subtraction between two dates that are BOTH already in the graph — see the note on
+# `rd_record_end` for why that distinction is the whole reason this needs no clock.
+def rd_days_between(a: str, b: str) -> int {
+    if (a == "") or (b == "") {
+        return 0;
+    }
+    try {
+        # `.toordinal()` rather than subtracting the dates: an `any`-typed `date - date` gives the
+        # checker no `timedelta` to find `.days` on, and fails E1055/E1032 at `jac check`.
+        da: int = int(datetime.date.fromisoformat(a).toordinal());
+        db: int = int(datetime.date.fromisoformat(b).toordinal());
+        return abs(db - da);
+    } except Exception {
+        # A malformed date is a write-path defect, not a reason to raise on the read path.
+        return 0;
+    }
+}
+
+
+# Distinct dates on which this anchor was observed, ascending.
+def rd_observation_dates(a: Anchor) -> list[str] {
+    obs: list[Observation] = [a <-:Reports:<-];
+    return rd_distinct_dates(obs);
+}
+
+
+# The last dated `Utterance` in the record.
+#
+# THIS IS NOT A STAND-IN FOR TODAY, and the distinction is the reason mechanism 2 needs no clock.
+# A gap here is the interval between two things that are BOTH written down — "you last logged this
+# on the 4th and the record continues to the 21st". That is a question entirely inside the record.
+#
+# The question this deliberately CANNOT answer is "and it is now the 26th, so you have been silent
+# for five more days". That one is genuinely relative to now, and using this value for it would
+# freeze the moment the patient stops writing — which is precisely the `silence` failure mode the
+# design leads with. `Vigil` (#21) has `today` in its pinned signature and owns that half.
+def rd_record_end() -> str {
+    utts: list[Utterance] = [root -->[?:Utterance]];
+    best: str = "";
+    for u in utts {
+        if u.at > best {
+            best = u.at;
+        }
+    }
+    return best;
+}
+
+
+# Patient check-in dates, ascending. `role == "patient"` ONLY: a label dated 2026-01-01 and an
+# oncologist note dated 2026-06-01 are not a five-month silence, they are two documents. Silence is
+# about the patient writing, and only the patient can be silent.
+def rd_checkin_dates() -> list[str] {
+    utts: list[Utterance] = [root -->[?:Utterance]];
+    dates: list[str] = [];
+    for u in utts {
+        if u.role != "patient" {
+            continue;
+        }
+        if u.at not in dates {
+            dates.append(u.at);
+        }
+    }
+    return sorted(dates);
+}
+
+
+# BOUNDED gaps in the check-in chain — every consecutive pair more than `min_days` apart, returned
+# as [start, end]. Bounded on both sides by construction, so the trailing gap (last check-in to
+# now) is absent by design and belongs to `Vigil`. See `rd_record_end`.
+def rd_silence_gaps(min_days: int) -> list[list[str]] {
+    dates: list[str] = rd_checkin_dates();
+    gaps: list[list[str]] = [];
+    for i in range(1, len(dates)) {
+        if rd_days_between(dates[i - 1], dates[i]) > min_days {
+            gaps.append([dates[i - 1], dates[i]]);
+        }
+    }
+    return gaps;
+}
+
+
+# Is this anchor's observation record monotone non-decreasing, with at least one strict increase,
+# over at least `min_points` distinct dates? One value per date — the WORST reading that day, so a
+# good afternoon after a bad morning does not read as improvement.
+#
+# `trajectory` (#12), and S4 lives here: this returns a shape, not a conclusion. The row it feeds
+# says "it has come up across {cycles} — the pattern is worth showing my team". It does not say
+# what to do about it, and no caller may make it say so.
+def rd_is_worsening(a: Anchor, min_points: int) -> bool {
+    dates: list[str] = rd_observation_dates(a);
+    if len(dates) < min_points {
+        return False;
+    }
+    obs: list[Observation] = [a <-:Reports:<-];
+    peaks: list[float] = [];
+    for d in dates {
+        # Collected then `max`ed rather than tracked in a running variable: a reassignment inside
+        # the inner loop reads as dead to the checker and raises W2003.
+        vals: list[float] = [0.0];
+        for o in obs {
+            if o.at == d {
+                vals.append(o.value);
+            }
+        }
+        peaks.append(max(vals));
+    }
+    rose: bool = False;
+    for i in range(1, len(peaks)) {
+        if peaks[i] < peaks[i - 1] {
+            return False;
+        }
+        if peaks[i] > peaks[i - 1] {
+            rose = True;
+        }
+    }
+    return rose;
+}
+
+
+# Everything a belief `Conflicts` with, read in BOTH directions. `Conflicts` is directed
+# `Belief --> Belief` by schema but the relation it encodes is symmetric — two statements are
+# jointly unsatisfiable or they are not — so reading one direction finds half the pairs depending
+# on which one `Consolidate` happened to write first.
+#
+# A3: reading these is deterministic. The satisfiability judgement that CREATES them is `by llm()`
+# site #2, on the write path, where the two-site cap already accounts for it. Nothing here calls a
+# model.
+def rd_conflict_partners(b: Belief) -> list[Belief] {
+    out: list[Belief] = [b ->:Conflicts:->];
+    for x in [b <-:Conflicts:<-] {
+        out.append(x);
+    }
+    return out;
+}
+
+
+# Is this utterance authority-bearing? CONTRACTS §2 pins the set, and calls adding to it a safety
+# change rather than a schema change.
+def rd_is_authority(u: Utterance) -> bool {
+    return u.role in ["oncologist", "pharmacist", "label"];
 }
 
 
@@ -349,6 +549,69 @@ def rd_partner_candidates(c: Constraint, x: Anchor) -> list[Anchor] {
 
 
 # ==========================================================================================
+# Corroboration (#13) — A5: PROMOTES ONLY, NEVER DEMOTES
+# ==========================================================================================
+#
+# Two DISTINCT detection mechanisms converging on one anchor promote every concern on that anchor
+# by exactly ONE rung, capped at the per-kind ceiling in `RD_CEILINGS`. Mutates in place and
+# returns how many it moved, for the activity panel (#24).
+#
+# A5 IS ABSOLUTE AND THIS IS THE FUNCTION WHERE IT GETS BROKEN BY ACCIDENT. There is exactly one
+# assignment to `action` in this file, it is below, and it is guarded by `idx > cur` so it can only
+# move an index upward. A future edit that computes a target rung and assigns it unconditionally
+# reintroduces demotion silently — the ladder still looks right in every test where the target
+# happens to be the higher value.
+#
+# A CHANNEL B HIT REACHES `ask` UNCORROBORATED, EVERY TIME. Nothing here is a precondition for
+# severity, only an addition to it. Prior art in this space drove precision up by REQUIRING
+# corroboration before escalating; copying that would turn the two-channel split into the
+# silent-failure generator it exists to eliminate.
+#
+# A module-level `def` rather than a walker ability so the annex can hand it concerns at any rung
+# and check the arithmetic directly. Reachable only through a fixture, the one case that matters
+# most — a concern sitting BELOW its ceiling — is currently unreachable, because every mechanism
+# in this file emits at its ceiling. Which means this promotes nothing today: the safe direction,
+# since an inert promoter cannot hurt anyone and a demoting one could. Its real customer is
+# channel A (#15), whose concerns sit below `mention` and which S6 caps there regardless.
+def rd_corroborate(cons: list[Concern]) -> int {
+    kinds_by_anchor: dict[str, list[str]] = {};
+    for c in cons {
+        if c.anchor not in kinds_by_anchor {
+            kinds_by_anchor[c.anchor] = [];
+        }
+        if c.kind not in kinds_by_anchor[c.anchor] {
+            kinds_by_anchor[c.anchor].append(c.kind);
+        }
+    }
+
+    moved: list[str] = [];
+    for c in cons {
+        # DISTINCT KINDS, not concern count. Two `additive_toxicity` rows on one symptom are one
+        # mechanism finding two pairs, not two mechanisms agreeing with each other.
+        if len(kinds_by_anchor.get(c.anchor, [])) < 2 {
+            continue;
+        }
+        if c.action not in RD_LADDER {
+            continue;
+        }
+        cur: int = RD_LADDER.index(c.action);
+        ceil_name: str = RD_CEILINGS.get(c.kind, "mention");
+        ceil: int = RD_LADDER.index(ceil_name) if ceil_name in RD_LADDER else 1;
+
+        # ONE rung, and `min` is what makes "stop at the ceiling" true rather than "usually stop
+        # at the ceiling". A kind absent from `RD_CEILINGS` caps at `mention` — a new kind cannot
+        # reach the top of the page by being forgotten.
+        idx: int = min(cur + 1, ceil);
+        if idx > cur {
+            moved.append(c.anchor);
+            c.action = RD_LADDER[idx];
+        }
+    }
+    return len(moved);
+}
+
+
+# ==========================================================================================
 # `Recall` — channel B, the exhaustive constraint traversal (#8)
 # ==========================================================================================
 #
@@ -391,6 +654,10 @@ walker:pub Recall {
     # `interaction`). Unordered on purpose: the triangle is reachable from either arm and the
     # curated pair from either side, and both must yield the same single concern.
     has rd_seen_pairs: list[str] = [];
+
+    # How many concerns corroboration promoted (#13). Walker internal state, not a wire field —
+    # CONTRACTS §4 has the activity panel read producer-walker state, and #24 reads this.
+    has rd_promotions: int = 0;
 
     # ============ S5: THE EMERGENCY BYPASS. THIS ABILITY MUST STAY FIRST. ================
     #
@@ -583,6 +850,197 @@ walker:pub Recall {
         # the shared symptom of a triangle processed a single time no matter how many arms of it
         # the traversal arrived on.
 
+        # ===== MECHANISM 2 (#11) — a path is missing that should exist ====================
+        # S3 made operational. Absence of an EDGE is inspectable; absence of a top-k hit is not,
+        # and a retriever cannot rank a document that does not exist. Everything here is set
+        # difference against the parsed regimen: what should be happening is ground truth, what is
+        # happening is observed, and the finding is the gap.
+        #
+        # ALL FOUR CAP AT `mention`. An absence is real evidence and it is not a reason to put a
+        # row at the top of the page on its own; corroboration (#13) may lift it, capped.
+        #
+        # Every gap below is bounded on BOTH sides by dates already in the graph — see
+        # `rd_record_end`. The trailing "and nothing since, and it is now July" half needs a clock
+        # and is `Vigil`'s (#21).
+
+        # --- unattributed symptom: reported, and nothing on the list explains it ----------
+        # New and unexplained means MORE urgent, not less. This is `rd_toxicity_contributors`
+        # from #10 read for emptiness — the same helper answers mechanism 1 by being non-empty and
+        # mechanism 2 by being empty, so the two can never disagree about what attributes what.
+        if here.kind == "symptom" {
+            odates: list[str] = rd_observation_dates(here);
+            if len(odates) > 0 {
+                # Collected rather than flagged: a `bool` set inside a branch reads as dead to the
+                # checker (W2003), and the keys are worth having when this is being debugged.
+                attributed: list[str] = [];
+                for cnd in rd_toxicity_contributors(here) {
+                    if len(rd_regimen_source(cnd)) > 0 {
+                        attributed.append(cnd.key);
+                    }
+                }
+                ukey: str = "unattr|" + here.key;
+                if (len(attributed) == 0) and (ukey not in self.rd_seen_pairs) {
+                    self.rd_seen_pairs.append(ukey);
+                    # `{count}` counts the Utterance citations, so the observations' own sources
+                    # lead. Without them `pg_row` drops the row for having no citation (S2).
+                    uev: list[str] = [];
+                    for o in [here <-:Reports:<-] {
+                        for su in rd_latest_source(o) {
+                            if jid(su) not in uev {
+                                uev.append(jid(su));
+                            }
+                        }
+                    }
+                    for o in [here <-:Reports:<-] {
+                        uev.append(jid(o));
+                    }
+                    if len(uev) == 0 {
+                        self.rd_notes.append("uncitable symptom observations: " + here.key);
+                    } else {
+                        self.out.concerns.append(
+                            Concern(
+                                kind="unattributed_symptom", anchor=here.key, evidence=uev,
+                                since=odates[0], action="mention"
+                            )
+                        );
+                    }
+                }
+            }
+        }
+
+        # --- supportive-care gap: the prescription that was never filled ------------------
+        # ARCHITECTURE §7's caption, implemented literally: the patient is describing a symptom,
+        # an instruction covering it exists, and the substance that instruction names has no
+        # adherence record at all.
+        if here.kind == "symptom" {
+            sdates: list[str] = rd_observation_dates(here);
+            if len(sdates) > 0 {
+                for c in rd_touching_constraints(here) {
+                    named: list[Anchor] = rd_partner_candidates(c, here);
+                    if len(named) == 0 {
+                        # An instruction that names no substance cannot be un-filled.
+                        continue;
+                    }
+                    followed: list[str] = [];
+                    for d in named {
+                        if len(rd_observation_dates(d)) > 0 {
+                            followed.append(d.key);
+                        }
+                    }
+                    if len(followed) > 0 {
+                        continue;
+                    }
+                    gkey: str = "scgap|" + here.key + "|" + jid(c);
+                    if gkey in self.rd_seen_pairs {
+                        continue;
+                    }
+                    self.rd_seen_pairs.append(gkey);
+
+                    cite: list[Utterance] = rd_latest_source(c);
+                    if len(cite) == 0 {
+                        self.rd_notes.append(
+                            "uncitable supportive-care instruction: " + c.claim
+                        );
+                        continue;
+                    }
+                    # `{instruction}` resolves from the first AUTHORITY-role utterance, so the
+                    # constraint's citation must be present; `{since}` is when the patient started
+                    # describing the symptom, which is the observations'.
+                    sev: list[str] = [jid(cite[0])];
+                    for o in [here <-:Reports:<-] {
+                        sev.append(jid(o));
+                    }
+                    self.out.concerns.append(
+                        Concern(
+                            kind="supportive_care_gap", anchor=here.key, evidence=sev,
+                            since=sdates[0], action="mention"
+                        )
+                    );
+                }
+            }
+        }
+
+        # --- adherence gap: a regimen drug with no record of being taken -----------------
+        # Interval from the last thing we know about this drug — its most recent observation, or
+        # its regimen date if it has never been observed — to the end of the record. Both ends are
+        # dates in the graph.
+        if here.kind in ["ingredient", "food"] {
+            reg: list[Utterance] = rd_regimen_source(here);
+            if len(reg) > 0 {
+                adates: list[str] = rd_observation_dates(here);
+                last_seen: str = adates[-1] if len(adates) > 0 else reg[0].at;
+                end: str = rd_record_end();
+                if (end != "") and (rd_days_between(last_seen, end) > RD_ADHERENCE_DAYS) {
+                    akey: str = "adh|" + here.key;
+                    if akey not in self.rd_seen_pairs {
+                        self.rd_seen_pairs.append(akey);
+                        aev: list[str] = [jid(reg[0])];
+                        for o in [here <-:Reports:<-] {
+                            aev.append(jid(o));
+                        }
+                        self.out.concerns.append(
+                            Concern(
+                                kind="adherence_gap", anchor=here.key, evidence=aev,
+                                since=last_seen, action="mention"
+                            )
+                        );
+                    }
+                }
+            }
+        }
+
+        # --- nonadherence cause: the same absence, plus a stated reason -------------------
+        # PLAUSIBLY THE HIGHEST-VALUE ROW THE SYSTEM PRODUCES (#12). Missed for cost or transport
+        # and missed for toxicity lead to different clinical action, and the second is what gets
+        # assumed when nobody asks.
+        #
+        # Detected STRUCTURALLY, not by reading the claim text: an active-regimen drug, no
+        # observation of it since its regimen date, and the patient saying something about it
+        # afterwards. Nothing marks a `Belief` as "this is why I stopped" — and nothing needs to,
+        # because the row then quotes the patient verbatim, which is S8's stronger half.
+        if here.kind in ["ingredient", "food"] {
+            nreg: list[Utterance] = rd_regimen_source(here);
+            if len(nreg) > 0 {
+                ndates: list[str] = rd_observation_dates(here);
+                since_reg: list[str] = [];
+                for d in ndates {
+                    if d >= nreg[0].at {
+                        since_reg.append(d);
+                    }
+                }
+                if len(since_reg) == 0 {
+                    for b in [here <-:About:<-] {
+                        if isinstance(b, Constraint) or isinstance(b, Preference) {
+                            continue;
+                        }
+                        for bu in rd_latest_source(b) {
+                            if bu.role != "patient" {
+                                continue;
+                            }
+                            if bu.at < nreg[0].at {
+                                continue;
+                            }
+                            nkey: str = "ncause|" + here.key + "|" + jid(bu);
+                            if nkey in self.rd_seen_pairs {
+                                continue;
+                            }
+                            self.rd_seen_pairs.append(nkey);
+                            # The PATIENT utterance leads: `pg_slots` fills `{cause}` and `{at}`
+                            # from the first `role == "patient"` citation, and the whole point of
+                            # this row is that the reason is in the patient's own words.
+                            self.out.concerns.append(
+                                Concern(
+                                    kind="nonadherence_cause", anchor=here.key,
+                                    evidence=[jid(bu), jid(nreg[0])],
+                                    since=bu.at, action="mention"
+                                )
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         # ===== MECHANISM 3 (#12) — accumulated Observation crosses a stated threshold =====
         # The NON-emergency half. `rd_emergency` takes `emergency == True` at `escalate`; this
         # takes the rest at `ask`, over the same parsed fields and the same crossing test. Both
@@ -640,6 +1098,51 @@ walker:pub Recall {
                         # days" is a duration, and it starts when the crossing started.
                         since=dates[0],
                         action="ask"
+                    )
+                );
+            }
+        }
+
+        # --- trajectory: monotone worsening on a cumulative-toxicity anchor --------------
+        # S4 IS THE POINT OF THIS RULE, not a side condition. ARCHITECTURE §7 names trajectory as
+        # the place dose concern legitimately lives, and the output is "worth raising at the next
+        # visit, here is the record". The rule reports a SHAPE — non-decreasing with a rise — and
+        # never a cause, a dose, or a recommendation. Neither the template nor anything below
+        # contains dosing vocabulary, and the acceptance check greps for it.
+        #
+        # NO DATA SOURCE ON MAIN TODAY: nothing in `write.jac` ever sets `Anchor.cumulative`, so
+        # this fires only on a fixture. The rule is right and the vocabulary does not feed it yet.
+        if here.kind == "symptom" {
+            for src in rd_toxicity_contributors(here) {
+                if not src.cumulative {
+                    continue;
+                }
+                drug_src: list[Utterance] = rd_regimen_source(src);
+                if len(drug_src) == 0 {
+                    continue;
+                }
+                # Three points, because two is a line and not yet a pattern.
+                if not rd_is_worsening(here, 3) {
+                    continue;
+                }
+                tkey: str = "traj|" + here.key + "|" + src.key;
+                if tkey in self.rd_seen_pairs {
+                    continue;
+                }
+                self.rd_seen_pairs.append(tkey);
+
+                # `{cycles}` resolves from `pg_slots`' observation-date count, so the observations
+                # have to be in the evidence for the row to say anything. The regimen utterance
+                # leads so S2 has a citation to render.
+                tev: list[str] = [jid(drug_src[0])];
+                for o in [here <-:Reports:<-] {
+                    tev.append(jid(o));
+                }
+                odates: list[str] = rd_observation_dates(here);
+                self.out.concerns.append(
+                    Concern(
+                        kind="trajectory", anchor=here.key, evidence=tev,
+                        since=odates[0], action="mention"
                     )
                 );
             }
@@ -811,11 +1314,263 @@ walker:pub Recall {
                 at=u.at
             )
         );
+
+        # ===== MECHANISM 4 (#12) — two stated things contradict ==========================
+        # One traversal over `Conflicts`, classified by what sits at the far end. The edges are
+        # written by `Consolidate` (#6), whose satisfiability judgement is `by llm()` site #2 on
+        # the WRITE path — reading them here is deterministic and adds no site (A3).
+        #
+        # NO DATA SOURCE ON MAIN TODAY: `Consolidate`'s walker body has not landed, so nothing
+        # writes a `Conflicts` edge and both kinds below fire only on a fixture. Raised on #6.
+        #
+        # Placed after the citation check deliberately: a superseded or uncitable constraint has
+        # already `skip`ped, and a contradiction we cannot cite cannot be shown either (S2).
+        for other in rd_conflict_partners(here) {
+            osrc: list[Utterance] = rd_latest_source(other);
+            if len(osrc) == 0 {
+                self.rd_notes.append("uncitable conflict partner (no DerivedFrom): " + other.claim);
+                continue;
+            }
+            ou: Utterance = osrc[0];
+
+            two: list[str] = sorted([cid, jid(other)]);
+            ckey: str = "conf|" + two[0] + "|" + two[1];
+            if ckey in self.rd_seen_pairs {
+                continue;
+            }
+            self.rd_seen_pairs.append(ckey);
+
+            # The anchor a conflict is ABOUT. `Row.id` feeds `Investigate`, so a conflict with no
+            # anchor is a row the patient cannot expand; skip rather than emit an unopenable row.
+            subjects: list[Anchor] = [here ->:Governs:->];
+            for x in [here ->:Excludes:->] {
+                subjects.append(x);
+            }
+            if len(subjects) == 0 {
+                self.rd_notes.append("conflict on an anchorless constraint: " + here.claim);
+                continue;
+            }
+
+            if isinstance(other, Constraint) {
+                # Two INSTRUCTIONS that cannot both be followed. Only a cross-PRESCRIBER conflict
+                # if the two authorities differ — one clinician restating themselves is not a
+                # conflict between clinicians, and putting it on the page as one would be a
+                # fabricated disagreement.
+                if not (rd_is_authority(u) and rd_is_authority(ou)) {
+                    continue;
+                }
+                if u.role == ou.role {
+                    continue;
+                }
+                # Ordered by (date, jid) so both arrival directions agree. `pg_slots` fills
+                # `{claim_a}`/`{role_a}` from utts[0] and `{claim_b}`/`{role_b}` from utts[1].
+                mine_k: str = u.at + "|" + cid;
+                other_k: str = ou.at + "|" + jid(other);
+                first: Utterance = u if mine_k <= other_k else ou;
+                second: Utterance = ou if mine_k <= other_k else u;
+                self.out.concerns.append(
+                    Concern(
+                        kind="cross_prescriber_conflict", anchor=subjects[0].key,
+                        evidence=[jid(first), jid(second)],
+                        since=first.at, action="ask"
+                    )
+                );
+            } else {
+                # An INSTRUCTION against a BEHAVIOUR: "within 30 minutes after food" versus
+                # "whenever I remember". `pg_slots` fills `{instruction}` from the first
+                # authority-role citation and `{observed}` from the first patient-role one, so the
+                # evidence must carry ONE OF EACH or the row says the instruction twice.
+                if not rd_is_authority(u) {
+                    continue;
+                }
+                if ou.role != "patient" {
+                    continue;
+                }
+                dev: list[str] = [jid(u), jid(ou)];
+                # `{days}` counts observation dates in the evidence; without these the row reads
+                # "On 0 days I described ...".
+                for o in [subjects[0] <-:Reports:<-] {
+                    dev.append(jid(o));
+                }
+                self.out.concerns.append(
+                    Concern(
+                        kind="instruction_drift", anchor=subjects[0].key, evidence=dev,
+                        since=ou.at, action="mention"
+                    )
+                );
+            }
+        }
     }
 
-    # --- Root exit: assemble and report exactly once -------------------------------------
+    # --- Root exit: corroboration (#13), then assemble and report exactly once ------------
     can rd_finish with Root exit {
+        self.rd_promotions = rd_corroborate(self.out.concerns);
         self.out.allowed = not self.rd_hard_hit;
+        report self.out;
+    }
+}
+
+
+# ==========================================================================================
+# `Investigate` — the case file (#14)
+# ==========================================================================================
+#
+# THE DIFFERENCE BETWEEN A DETECTOR AND A COMPANION. Spawned LAZILY, when the patient expands an
+# `ask` row — not on every finding. A detector says "these two drugs share a risk"; a companion
+# says "here is when it started, here is what changed that week, and here is what you were already
+# told about it".
+#
+# Signature pinned by CONTRACTS §4. `:pub` because `page.cl.jac` spawns it from a row expansion.
+#
+# A9: STRICTLY READ-ONLY. `Recall` is the only walker that reinforces, and this one writes nothing
+# at all — no `strength`, no `uses`, no `last_used`, no edge weight, no node. Zero `by llm()`.
+walker:pub Investigate {
+    has concern_kind: str;
+    has anchor: str;
+    has out: CaseFile = CaseFile();
+
+    can rd_investigate with Root entry {
+        known: list[Anchor] = [here -->[?:Anchor]];
+        found: list[Anchor] = [];
+        for a in known {
+            if a.key == self.anchor {
+                found.append(a);
+            }
+        }
+        if len(found) == 0 {
+            # S3: absence is "not in your record", never "safe". An empty CaseFile with no onset
+            # renders as exactly that rather than as an empty reassurance.
+            report self.out;
+            disengage;
+        }
+        subject: Anchor = found[0];
+
+        # --- step 1: walk the Observation chain back to first onset ----------------------
+        odates: list[str] = rd_observation_dates(subject);
+        self.out.onset = odates[0] if len(odates) > 0 else "";
+
+        entries: list[TimelineEntry] = [];
+        cites: list[str] = [];
+
+        # --- step 2: compare onset against regimen change dates -------------------------
+        # Every drug whose toxicity reaches this anchor, plus the anchor itself when it is a drug.
+        # A regimen date near the onset date is the whole point of the case file: the thing that
+        # changed the week the symptom started.
+        drugs: list[Anchor] = rd_toxicity_contributors(subject);
+        if subject.kind in ["ingredient", "food"] {
+            drugs.append(subject);
+        }
+        for d in drugs {
+            dsrc: list[Utterance] = rd_regimen_source(d);
+            if len(dsrc) == 0 {
+                continue;
+            }
+            entries.append(
+                TimelineEntry(at=dsrc[0].at, what=d.key + " started", source=dsrc[0].role)
+            );
+            if jid(dsrc[0]) not in cites {
+                cites.append(jid(dsrc[0]));
+            }
+        }
+
+        # --- step 3: the counterfactual -------------------------------------------------
+        # Days the drug was absent from the record, and whether the symptom was absent too. The
+        # honest form of this: a symptom that stops when the drug stops is a different
+        # conversation from one that does not, and neither is a conclusion the system draws.
+        #
+        # Named the drop candidate in #14 if the schedule slipped. It did not.
+        gaps: list[list[str]] = [];
+        for d in drugs {
+            dd: list[str] = rd_observation_dates(d);
+            if len(dd) < 2 {
+                continue;
+            }
+            for i in range(1, len(dd)) {
+                if rd_days_between(dd[i - 1], dd[i]) > RD_ADHERENCE_DAYS {
+                    gaps.append([dd[i - 1], dd[i]]);
+                }
+            }
+        }
+        if len(gaps) > 0 {
+            quiet: list[str] = [];
+            for g in gaps {
+                sym_in_gap: list[str] = [];
+                for od in odates {
+                    if (od > g[0]) and (od < g[1]) {
+                        sym_in_gap.append(od);
+                    }
+                }
+                if len(sym_in_gap) == 0 {
+                    quiet.append(g[0] + " to " + g[1]);
+                }
+            }
+            if len(quiet) > 0 {
+                self.out.counterfactual = (
+                    "no record of " + subject.key + " between " + quiet[0]
+                    + ", which is also a stretch with no record of the drug"
+                );
+            }
+        }
+
+        # --- step 4: an existing instruction changes what the row says -------------------
+        # "Report this" becomes "the instruction you were given covers this". This is the line
+        # that stops the page telling a patient to raise something they were already told about.
+        for c in rd_touching_constraints(subject) {
+            csrc: list[Utterance] = rd_latest_source(c);
+            if len(csrc) == 0 {
+                continue;
+            }
+            if self.out.existing_instruction == "" {
+                # S8: the clinician's own sentence, verbatim. Not a summary of it.
+                self.out.existing_instruction = csrc[0].text;
+            }
+            entries.append(
+                TimelineEntry(at=csrc[0].at, what=c.claim, source=csrc[0].role)
+            );
+            if jid(csrc[0]) not in cites {
+                cites.append(jid(csrc[0]));
+            }
+        }
+
+        # --- step 5: the dated timeline, every entry carrying a source -------------------
+        for o in [subject <-:Reports:<-] {
+            osrc: list[Utterance] = rd_latest_source(o);
+            # An observation with no citation cannot carry a source, and a timeline entry without
+            # one is exactly what S2 forbids. Dropped rather than shown with an empty attribution.
+            if len(osrc) == 0 {
+                continue;
+            }
+            entries.append(
+                TimelineEntry(
+                    at=o.at,
+                    what=subject.key + " reported at " + str(o.value),
+                    source=osrc[0].role
+                )
+            );
+            if jid(osrc[0]) not in cites {
+                cites.append(jid(osrc[0]));
+            }
+        }
+
+        # Chronological. Sorted on a composed key rather than by `at` alone so two entries on one
+        # date come back in a stable order — a case file that reshuffles between two expansions of
+        # the same row reads as a bug even when both orders are correct.
+        keyed: list[str] = [];
+        by_key: dict[str, TimelineEntry] = {};
+        for e in entries {
+            k: str = e.at + "|" + e.what + "|" + e.source;
+            if k not in by_key {
+                by_key[k] = e;
+                keyed.append(k);
+            }
+        }
+        for k in sorted(keyed) {
+            self.out.timeline.append(by_key[k]);
+        }
+        self.out.citations = cites;
+    }
+
+    can rd_case_done with Root exit {
         report self.out;
     }
 }

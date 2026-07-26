@@ -30,8 +30,43 @@
 # position — and only under `jac check .`, since `jac check read.jac` alone does not pull the annex.
 
 import from graph {
-    Anchor, Belief, Constraint, Observation, Preference, Utterance,
-    About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
+    Anchor, Belief, Concern, Constraint, Observation, Preference, Utterance,
+    About, Conflicts, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
+}
+
+
+# 4. EXACT `len(v.concerns)` ASSERTIONS DIED WITH #11, and this is why.
+#
+# Mechanism 2 fires on ABSENCE, and the set of things absent from a fixture is always larger than
+# the set of things present in it. A regimen drug with no `Observation` is a real `adherence_gap`
+# even in a fixture built to test the QT triangle; a symptom nothing attributes is a real
+# `unattributed_symptom` even in one built to test an emergency threshold. Both are correct
+# findings and both would make a total count meaningless.
+#
+# So every count below is KIND-SPECIFIC. That is sharper than the totals it replaced — a test that
+# said "one concern" now says "one `additive_toxicity` concern" — but it does mean a new mechanism
+# can no longer break these tests by firing where they were not looking. The suite compensates
+# with `no mechanism ever emits above its ceiling`, which is a total assertion over every concern
+# any fixture in this file produces.
+def rd_kind_count(cons: list[Concern], kind: str) -> int {
+    hits: list[str] = [];
+    for c in cons {
+        if c.kind == kind {
+            hits.append(c.anchor);
+        }
+    }
+    return len(hits);
+}
+
+
+# The one concern of a given kind on a given anchor, or None.
+def rd_pick(cons: list[Concern], kind: str, anchor: str) -> Concern | None {
+    for c in cons {
+        if (c.kind == kind) and (c.anchor == anchor) {
+            return c;
+        }
+    }
+    return None;
 }
 
 
@@ -377,10 +412,10 @@ test "two independently prescribed drugs converging on one symptom raise one add
     r = root spawn Recall(anchors=[t + "ondansetron"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) == 1, f"expected exactly one Concern, got {len(v.concerns)}";
-    con = v.concerns[0];
-    assert con.kind == "additive_toxicity";
-    assert con.anchor == t + "qt_prolongation", "the concern is ABOUT the shared symptom";
+    assert rd_kind_count(v.concerns, "additive_toxicity") == 1,
+        f"expected exactly one additive_toxicity Concern, got {v.concerns}";
+    con = rd_pick(v.concerns, "additive_toxicity", t + "qt_prolongation");
+    assert con is not None, "the concern is ABOUT the shared symptom";
     assert con.action == "ask", "CONTRACTS §3 ceiling — S6 reserves escalate for rd_emergency";
 
     # "Both prescriber roles and both dates in its evidence" — they ride on these two Utterances,
@@ -414,10 +449,10 @@ test "the same triangle reached from the other arm is the same single concern" {
     r = root spawn Recall(anchors=[t + "levofloxacin"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) == 1, f"reached from levofloxacin: expected 1, got {len(v.concerns)}";
-    con = v.concerns[0];
-    assert con.kind == "additive_toxicity";
-    assert con.anchor == t + "qt_prolongation";
+    assert rd_kind_count(v.concerns, "additive_toxicity") == 1,
+        f"reached from levofloxacin: expected 1, got {v.concerns}";
+    con = rd_pick(v.concerns, "additive_toxicity", t + "qt_prolongation");
+    assert con is not None;
     # Identical, not mirrored. The pair is ordered by regimen date, not by arrival direction.
     assert con.evidence[0] == jid([root -->[?:Utterance, at == "2026-02-10"]][0]);
     assert con.since == "2026-05-03";
@@ -430,7 +465,8 @@ test "both arms queried at once still yields one concern" {
     t = "m1_";
     r = root spawn Recall(anchors=[t + "ondansetron", t + "levofloxacin"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
-    assert len(v.concerns) == 1, f"expected 1 concern from both arms, got {len(v.concerns)}";
+    assert rd_kind_count(v.concerns, "additive_toxicity") == 1,
+        f"expected 1 additive_toxicity from both arms, got {v.concerns}";
 }
 
 
@@ -461,8 +497,8 @@ test "a discontinued drug is not active regimen and forms no pair" {
 
     r = root spawn Recall(anchors=[t + "ondansetron"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
-    assert len(v.concerns) == 1,
-        f"a stopped drug must add no pair — expected 1 concern, got {len(v.concerns)}";
+    assert rd_kind_count(v.concerns, "additive_toxicity") == 1,
+        f"a stopped drug must add no pair — got {v.concerns}";
 }
 
 
@@ -489,8 +525,8 @@ test "a Preference or Constraint About an anchor does not make it active regimen
 
     r = root spawn Recall(anchors=[t + "ondansetron"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
-    assert len(v.concerns) == 1,
-        f"an opinion is not a prescription — expected 1 concern, got {len(v.concerns)}";
+    assert rd_kind_count(v.concerns, "additive_toxicity") == 1,
+        f"an opinion is not a prescription — got {v.concerns}";
 }
 
 
@@ -516,7 +552,8 @@ test "a single active drug on a symptom raises nothing" {
 
     r = root spawn Recall(anchors=[t + "capecitabine"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
-    assert len(v.concerns) == 0, "one drug on a symptom is not a shared toxicity";
+    assert rd_kind_count(v.concerns, "additive_toxicity") == 0,
+        "one drug on a symptom is not a shared toxicity";
 }
 
 
@@ -579,9 +616,10 @@ test "a new substance entering the regimen raises an interaction against the dru
     r = root spawn Recall(anchors=[t + "st_johns_wort"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) == 1, f"expected one interaction Concern, got {len(v.concerns)}";
-    con = v.concerns[0];
-    assert con.kind == "interaction";
+    assert rd_kind_count(v.concerns, "interaction") == 1,
+        f"expected one interaction Concern, got {v.concerns}";
+    con = rd_pick(v.concerns, "interaction", t + "st_johns_wort");
+    assert con is not None;
     assert con.action == "ask";
     # `{new}` is the LATER-prescribed side. Structural, not temporal — Recall has no `today`.
     assert con.anchor == t + "st_johns_wort", "the concern is about the substance just added";
@@ -608,10 +646,10 @@ test "the same interaction reached from the regimen drug names the same new subs
     r = root spawn Recall(anchors=[t + "imatinib"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) == 1, f"reached from imatinib: expected 1, got {len(v.concerns)}";
-    con = v.concerns[0];
-    assert con.kind == "interaction";
-    assert con.anchor == t + "st_johns_wort",
+    assert rd_kind_count(v.concerns, "interaction") == 1,
+        f"reached from imatinib: expected 1, got {v.concerns}";
+    con = rd_pick(v.concerns, "interaction", t + "st_johns_wort");
+    assert con is not None,
         "{new} is decided from the two regimen dates, not from which side the walker arrived on";
     assert con.since == "2026-06-18";
 }
@@ -648,7 +686,8 @@ test "a curated pair with only one side in the regimen raises nothing" {
 
     r = root spawn Recall(anchors=[t + "warfarin"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
-    assert len(v.concerns) == 0, "a pair the patient is not taking both sides of is not a finding";
+    assert rd_kind_count(v.concerns, "interaction") == 0,
+        "a pair the patient is not taking both sides of is not a finding";
     # Channel B still returns the constraint — unscored and exhaustive, exactly as A2 requires.
     assert len(v.violations) == 1, "channel B is unaffected by mechanism 1 finding nothing";
 }
@@ -769,6 +808,597 @@ test "a constraint with no parsed threshold emits no persistence" {
 
 
 # ==========================================================================================
+# #11 — mechanism 2, the absence class. ABOVE THE #9 BLOCK, same reason as #10 and #12.
+# ==========================================================================================
+
+# ACCEPTANCE (#11). A symptom the patient keeps reporting that NOTHING on the current list
+# explains. New and unexplained is MORE worth asking about, not less — the row is emitted, never
+# suppressed for being unattributable.
+test "a symptom no active drug attributes raises unattributed_symptom at mention" {
+    t = "a1_";
+    sym = Anchor(key=t + "diarrhea", kind="symptom");
+    root ++> sym;
+    # No Member(toxicity_of) into this anchor from anywhere: the absence IS the finding.
+    for d in ["2026-06-13", "2026-06-16"] {
+        u = Utterance(text="Some loose stools again.", at=d, role="patient");
+        root ++> u;
+        o = Observation(metric="diarrhea", value=2.0, at=d);
+        root ++> o;
+        o +>:Reports:+> sym;
+        o +>:DerivedFrom:+> u;
+    }
+
+    r = root spawn Recall(anchors=[t + "diarrhea"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    con = rd_pick(v.concerns, "unattributed_symptom", t + "diarrhea");
+    assert con is not None, f"expected unattributed_symptom, got {v.concerns}";
+    assert con.action == "mention", "CONTRACTS §3 ceiling — an absence never reaches ask alone";
+    assert con.since == "2026-06-13", "since is the first time they described it";
+    # S2: the observations' own Utterances lead, or `pg_row` drops the row and `{count}` is 0.
+    assert len(con.evidence) >= 2, f"needs citations plus observations, got {con.evidence}";
+}
+
+
+# The other side of the same helper. `rd_toxicity_contributors` answers mechanism 1 by being
+# non-empty and mechanism 2 by being empty, so the two can never disagree about what explains what.
+test "a symptom an active drug does attribute raises no unattributed_symptom" {
+    t = "a2_";
+    drug = Anchor(key=t + "ondansetron", kind="ingredient");
+    cls = Anchor(key=t + "QT-prolonging", kind="class");
+    sym = Anchor(key=t + "qt_prolongation", kind="symptom");
+    root ++> drug;
+    root ++> cls;
+    root ++> sym;
+    drug +>:Member(via="class_member"):+> cls;
+    cls +>:Member(via="toxicity_of"):+> sym;
+
+    u = Utterance(text="Ondansetron 8mg.", at="2026-02-10", role="oncologist");
+    root ++> u;
+    b = Belief(claim="regimen: ondansetron");
+    root ++> b;
+    b +>:About:+> drug;
+    b +>:DerivedFrom:+> u;
+
+    uo = Utterance(text="Heart felt fluttery.", at="2026-06-01", role="patient");
+    root ++> uo;
+    o = Observation(metric="qt_prolongation", value=2.0, at="2026-06-01");
+    root ++> o;
+    o +>:Reports:+> sym;
+    o +>:DerivedFrom:+> uo;
+
+    r = root spawn Recall(anchors=[t + "qt_prolongation"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+    assert rd_pick(v.concerns, "unattributed_symptom", t + "qt_prolongation") is None,
+        "an attributed symptom is explained — that is not the absence class";
+}
+
+
+# The prescription that was never filled (ARCHITECTURE §7). An instruction covering this symptom
+# names a drug, and there is no record of the patient ever taking it.
+test "an instruction whose named drug has no adherence record raises supportive_care_gap" {
+    t = "a3_";
+    sym = Anchor(key=t + "constipation", kind="symptom");
+    drug = Anchor(key=t + "docusate", kind="ingredient");
+    root ++> sym;
+    root ++> drug;
+
+    uo = Utterance(text="Constipated again this week.", at="2026-06-05", role="patient");
+    root ++> uo;
+    o = Observation(metric="constipation", value=3.0, at="2026-06-05");
+    root ++> o;
+    o +>:Reports:+> sym;
+    o +>:DerivedFrom:+> uo;
+
+    ui = Utterance(text="Also take docusate daily for constipation prevention.",
+                   at="2026-06-01", role="oncologist");
+    root ++> ui;
+    c = Constraint(claim="take docusate daily", hard=True);
+    root ++> c;
+    c +>:Governs:+> sym;
+    c +>:Excludes(because="supportive care"):+> drug;
+    c +>:DerivedFrom:+> ui;
+    # docusate deliberately has ZERO Observations anywhere — seed element #3's shape.
+
+    r = root spawn Recall(anchors=[t + "constipation"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    con = rd_pick(v.concerns, "supportive_care_gap", t + "constipation");
+    assert con is not None, f"expected supportive_care_gap, got {v.concerns}";
+    assert con.action == "mention";
+    # `{instruction}` resolves from the first authority-role citation, so it has to lead.
+    assert con.evidence[0] == jid(ui), "the instruction's citation leads";
+}
+
+
+# ACCEPTANCE (#11). A regimen drug with no adherence record for longer than the window.
+# BOTH ENDS ARE DATES IN THE GRAPH — the regimen date and the end of the record. No clock.
+test "a regimen drug with no record for longer than the window raises adherence_gap" {
+    t = "a4_";
+    drug = Anchor(key=t + "imatinib", kind="ingredient");
+    root ++> drug;
+    u = Utterance(text="Imatinib 400mg daily.", at="2026-05-01", role="oncologist");
+    root ++> u;
+    b = Belief(claim="regimen: imatinib");
+    root ++> b;
+    b +>:About:+> drug;
+    b +>:DerivedFrom:+> u;
+    # The record continues well past the regimen date, and nothing references the drug.
+    tail = Utterance(text="Still feeling tired but otherwise okay.", at="2026-06-18", role="patient");
+    root ++> tail;
+
+    r = root spawn Recall(anchors=[t + "imatinib"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    con = rd_pick(v.concerns, "adherence_gap", t + "imatinib");
+    assert con is not None, f"expected adherence_gap, got {v.concerns}";
+    assert con.action == "mention";
+    assert con.since == "2026-05-01", "the gap starts at the last thing we knew about the drug";
+}
+
+
+# ACCEPTANCE (#11): the seeded 4-day gap. Tested on the helper directly, because `silence` is the
+# one global kind and is wired into `Vigil` (#21), not `Recall` — see the plan on #11. A root scan
+# inside `Recall` would staple "you haven't checked in for 4 days" onto every query.
+test "a bounded gap in the check-in chain is found, and only for patient utterances" {
+    t = "a5_";
+    # A gap bracketed on both sides: 4 days with nothing between — the seed's exact shape
+    # (2026-06-04 -> 2026-06-08).
+    #
+    # DATED IN SEPTEMBER ON PURPOSE. `silence` is the one rule that reads at ROOT rather than from
+    # the queried anchor, so unlike every other test here the `a5_` prefix protects nothing: a
+    # patient utterance any other fixture happens to write inside June lands *inside* the intended
+    # gap and splits it. The first version of this test used June and failed for exactly that
+    # reason. September is empty in this file.
+    for d in ["2026-09-01", "2026-09-02", "2026-09-06"] {
+        u = Utterance(text="check-in " + d, at=d, role="patient");
+        root ++> u;
+    }
+    gaps = rd_silence_gaps(3);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    found = False;
+    for g in gaps {
+        if g[0] == "2026-09-02" and g[1] == "2026-09-06" { found = True; }
+    }
+    assert found, f"expected the 09-02 -> 09-06 gap, got {gaps}";
+
+    # And clinician documents are not silence. Every gap returned must be between two dates that
+    # are patient check-ins — a label dated in January is a document, not four months of quiet.
+    checkins = rd_checkin_dates();  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    for g in gaps {
+        assert g[0] in checkins and g[1] in checkins,
+            f"a gap endpoint that is not a patient check-in: {g}";
+    }
+}
+
+
+# ==========================================================================================
+# #12 — the rest of mechanisms 3 and 4.
+# ==========================================================================================
+
+# S4 IS THE POINT OF THIS ONE. Trajectory is where dose concern legitimately lives, and the output
+# is "worth raising at the next visit, here is the record" — never a dosing conclusion.
+test "monotone worsening on a cumulative anchor raises trajectory with no dosing language" {
+    t = "b1_";
+    drug = Anchor(key=t + "oxaliplatin", kind="ingredient", cumulative=True);
+    sym = Anchor(key=t + "peripheral_neuropathy", kind="symptom");
+    root ++> drug;
+    root ++> sym;
+    drug +>:Member(via="toxicity_of"):+> sym;
+
+    u = Utterance(text="Oxaliplatin every three weeks.", at="2026-01-10", role="oncologist");
+    root ++> u;
+    b = Belief(claim="regimen: oxaliplatin");
+    root ++> b;
+    b +>:About:+> drug;
+    b +>:DerivedFrom:+> u;
+
+    # Three points, rising. Two would be a line, not yet a pattern.
+    vals = [{"at": "2026-02-01", "v": 2.0}, {"at": "2026-03-01", "v": 4.0},
+            {"at": "2026-04-01", "v": 6.0}];
+    for row in vals {
+        o = Observation(metric="peripheral_neuropathy", value=row["v"], at=row["at"]);
+        root ++> o;
+        o +>:Reports:+> sym;
+    }
+
+    r = root spawn Recall(anchors=[t + "peripheral_neuropathy"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    con = rd_pick(v.concerns, "trajectory", t + "peripheral_neuropathy");
+    assert con is not None, f"expected trajectory, got {v.concerns}";
+    assert con.action == "mention", "S4/CONTRACTS §3 — trajectory never reaches ask on its own";
+    assert con.since == "2026-02-01";
+
+    # ACCEPTANCE (#12): zero dosing language. Two halves, and this annex can only reach one of
+    # them — `PG_TEMPLATES` lives in `main.jac`, which an annex to `read.jac` does not see
+    # (`NameError` if referenced). So:
+    #
+    #   HERE: the concern this rule emits carries no prose the read path invented. Every string in
+    #   it is a graph-read key, a date, or a ladder rung. That is the half `read.jac` owns, and it
+    #   is what S4 asks of a detection rule — report a shape, never a conclusion.
+    #
+    #   NOT HERE: the rendered row. `Prepare` builds it from a template in `main.jac` and the
+    #   Recall->Prepare handoff is not wired (`pg_derived_concerns` is a stub). That grep belongs
+    #   to the integration test in #16, against the registry, not to this file.
+    banned = ["dose", "dosage", "too much", "overdose", "reduce", "stop taking", "increase"];
+    emitted = (con.kind + " " + con.anchor + " " + con.since + " " + con.action).lower();
+    for word in banned {
+        assert word not in emitted, f"S4: dosing language '{word}' emitted by the read path";
+    }
+}
+
+
+# A record that improves is not a trajectory. Without this the rule fires on any symptom with
+# three readings, which is every symptom.
+test "a non-monotone record raises no trajectory" {
+    t = "b2_";
+    drug = Anchor(key=t + "capecitabine", kind="ingredient", cumulative=True);
+    sym = Anchor(key=t + "hand_foot", kind="symptom");
+    root ++> drug;
+    root ++> sym;
+    drug +>:Member(via="toxicity_of"):+> sym;
+    u = Utterance(text="Capecitabine 1250mg.", at="2026-01-10", role="oncologist");
+    root ++> u;
+    b = Belief(claim="regimen: capecitabine");
+    root ++> b;
+    b +>:About:+> drug;
+    b +>:DerivedFrom:+> u;
+    for row in [{"at": "2026-02-01", "v": 5.0}, {"at": "2026-03-01", "v": 2.0},
+                {"at": "2026-04-01", "v": 6.0}] {
+        o = Observation(metric="hand_foot", value=row["v"], at=row["at"]);
+        root ++> o;
+        o +>:Reports:+> sym;
+    }
+    r = root spawn Recall(anchors=[t + "hand_foot"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    assert rd_pick(r.reports[0].concerns, "trajectory", t + "hand_foot") is None,
+        "it got better in the middle — that is not monotone worsening";
+}
+
+
+# ACCEPTANCE (#12). Plausibly the highest-value row the system produces: missed for cost and
+# missed for toxicity lead to different clinical action, and the second is what gets assumed.
+# Detected structurally — no claim text is read — and the row then quotes the patient verbatim.
+test "a stated reason plus a missing adherence record raises nonadherence_cause" {
+    t = "b3_";
+    drug = Anchor(key=t + "imatinib", kind="ingredient");
+    root ++> drug;
+    ur = Utterance(text="Imatinib 400mg daily.", at="2026-05-01", role="oncologist");
+    root ++> ur;
+    br = Belief(claim="regimen: imatinib");
+    root ++> br;
+    br +>:About:+> drug;
+    br +>:DerivedFrom:+> ur;
+
+    uc = Utterance(
+        text="Skipped my Gleevec refill this week, it's expensive and I couldn't get to the pharmacy.",
+        at="2026-06-15",
+        role="patient"
+    );
+    root ++> uc;
+    bc = Belief(claim="skipped Gleevec refill due to cost");
+    root ++> bc;
+    bc +>:About:+> drug;
+    bc +>:DerivedFrom:+> uc;
+
+    r = root spawn Recall(anchors=[t + "imatinib"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    con = rd_pick(v.concerns, "nonadherence_cause", t + "imatinib");
+    assert con is not None, f"expected nonadherence_cause, got {v.concerns}";
+    assert con.action == "mention";
+    # ACCEPTANCE: the cause string is carried into the evidence, and it leads — `pg_slots` fills
+    # `{cause}` and `{at}` from the first patient-role citation.
+    assert con.evidence[0] == jid(uc), "the patient's own sentence leads the evidence";
+    assert con.since == "2026-06-15";
+}
+
+
+# Mechanism 4 reads `Conflicts` edges written by #6. `Consolidate`'s body has not landed, so
+# nothing writes them on `main` yet — these fixtures write them directly. Raised on #6.
+test "two clinicians' conflicting instructions raise cross_prescriber_conflict at ask" {
+    t = "b4_";
+    a = Anchor(key=t + "naproxen", kind="ingredient");
+    root ++> a;
+    u1 = Utterance(text="Avoid NSAIDs entirely while on treatment.", at="2026-03-01", role="oncologist");
+    u2 = Utterance(text="Naproxen twice daily is fine for the joint pain.", at="2026-04-01", role="pharmacist");
+    root ++> u1;
+    root ++> u2;
+    c1 = Constraint(claim="no NSAIDs during treatment", hard=True);
+    c2 = Constraint(claim="naproxen twice daily is acceptable", hard=True);
+    root ++> c1;
+    root ++> c2;
+    c1 +>:Governs:+> a;
+    c2 +>:Governs:+> a;
+    c1 +>:DerivedFrom:+> u1;
+    c2 +>:DerivedFrom:+> u2;
+    c1 +>:Conflicts(derived_at="2026-04-02"):+> c2;
+
+    r = root spawn Recall(anchors=[t + "naproxen"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    con = rd_pick(v.concerns, "cross_prescriber_conflict", t + "naproxen");
+    assert con is not None, f"expected cross_prescriber_conflict, got {v.concerns}";
+    assert con.action == "ask", "CONTRACTS §3 ceiling";
+    # `{claim_a}/{role_a}` come off utts[0] and `{claim_b}/{role_b}` off utts[1], ordered by date
+    # so the row reads the same whichever constraint the walker reached first.
+    assert con.evidence[0] == jid(u1) and con.evidence[1] == jid(u2), "ordered by date";
+    # Exactly one, not one per direction of the edge read.
+    assert rd_kind_count(v.concerns, "cross_prescriber_conflict") == 1;
+}
+
+
+# One clinician restating themselves is not a disagreement between clinicians. Emitting it as one
+# would put a fabricated conflict on the page.
+test "two constraints from the same role raise no cross_prescriber_conflict" {
+    t = "b5_";
+    a = Anchor(key=t + "ibuprofen", kind="ingredient");
+    root ++> a;
+    u1 = Utterance(text="No ibuprofen.", at="2026-03-01", role="oncologist");
+    u2 = Utterance(text="Actually ibuprofen is fine occasionally.", at="2026-04-01", role="oncologist");
+    root ++> u1;
+    root ++> u2;
+    c1 = Constraint(claim="no ibuprofen", hard=True);
+    c2 = Constraint(claim="occasional ibuprofen acceptable", hard=True);
+    root ++> c1;
+    root ++> c2;
+    c1 +>:Governs:+> a;
+    c2 +>:Governs:+> a;
+    c1 +>:DerivedFrom:+> u1;
+    c2 +>:DerivedFrom:+> u2;
+    c1 +>:Conflicts(derived_at="2026-04-02"):+> c2;
+
+    r = root spawn Recall(anchors=[t + "ibuprofen"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    assert rd_kind_count(r.reports[0].concerns, "cross_prescriber_conflict") == 0,
+        "same prescriber twice is a revision, not a cross-prescriber conflict";
+}
+
+
+# ACCEPTANCE (#12): drift between a soft behaviour Belief and a hard Constraint.
+test "an instruction conflicting with a patient behaviour raises instruction_drift" {
+    t = "b6_";
+    a = Anchor(key=t + "ondansetron", kind="ingredient");
+    root ++> a;
+    ui = Utterance(text="Take Zofran within 30 minutes before food.", at="2026-06-01", role="oncologist");
+    ub = Utterance(text="I just take it whenever I remember.", at="2026-06-14", role="patient");
+    root ++> ui;
+    root ++> ub;
+    c = Constraint(claim="take within 30 minutes before food", hard=True);
+    beh = Belief(claim="takes it whenever they remember");
+    root ++> c;
+    root ++> beh;
+    c +>:Governs:+> a;
+    c +>:DerivedFrom:+> ui;
+    beh +>:About:+> a;
+    beh +>:DerivedFrom:+> ub;
+    c +>:Conflicts(derived_at="2026-06-15"):+> beh;
+
+    r = root spawn Recall(anchors=[t + "ondansetron"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    con = rd_pick(v.concerns, "instruction_drift", t + "ondansetron");
+    assert con is not None, f"expected instruction_drift, got {v.concerns}";
+    assert con.action == "mention", "CONTRACTS §3 ceiling";
+    # `{instruction}` resolves from the first AUTHORITY citation and `{observed}` from the first
+    # PATIENT one, so the evidence must carry one of each or the row says the instruction twice.
+    assert con.evidence[0] == jid(ui), "the instruction (authority role) leads";
+    assert con.evidence[1] == jid(ub), "the behaviour (patient role) follows";
+}
+
+
+# ==========================================================================================
+# #13 — corroboration. A5: promotes only, never demotes.
+#
+# Tested against `rd_corroborate` directly. Through a fixture the case that matters most — a
+# concern sitting BELOW its ceiling — is unreachable, because every mechanism in `read.jac` emits
+# at its ceiling today. That makes corroboration currently inert on real data, which is the safe
+# direction and is worth pinning rather than hiding.
+# ==========================================================================================
+
+# ACCEPTANCE (#13): two mechanisms on one anchor promote exactly one rung, and stop at the ceiling.
+test "two mechanisms on one anchor promote exactly one rung and stop at the ceiling" {
+    # `trajectory` caps at mention, `persistence` at ask. Both start at log, both share an anchor.
+    cons = [
+        Concern(kind="trajectory", anchor="z", evidence=[], since="2026-01-01", action="log"),
+        Concern(kind="persistence", anchor="z", evidence=[], since="2026-01-01", action="log"),
+    ];
+    moved = rd_corroborate(cons);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    assert moved == 2, f"both should move exactly once, got {moved}";
+    assert cons[0].action == "mention", "log -> mention is one rung, and mention is its ceiling";
+    assert cons[1].action == "mention", "one rung only — persistence does NOT jump log -> ask";
+
+    # Run it again: `trajectory` is now AT its ceiling and must not move; `persistence` has one
+    # rung left. This is the "stop at the ceiling" half, and it is where an unguarded assignment
+    # would show up.
+    moved2 = rd_corroborate(cons);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    assert moved2 == 1, f"only persistence has headroom left, got {moved2}";
+    assert cons[0].action == "mention", "trajectory is capped at mention and stays there";
+    assert cons[1].action == "ask", "persistence reaches its ceiling and stops";
+
+    moved3 = rd_corroborate(cons);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    assert moved3 == 0, "both at their ceilings — nothing left to promote";
+    assert cons[1].action == "ask", "and nothing above it, ever";
+}
+
+
+# A5, as a property rather than a spot check. Every action out is at or above the action in, for
+# every kind at every rung. This is the test that fails if someone replaces the guarded step with
+# an unconditional assignment to a computed target.
+test "corroboration never lowers an action, for any kind at any rung" {
+    for kind in ["emergency", "interaction", "persistence", "trajectory", "silence",
+                 "cross_prescriber_conflict", "nonadherence_cause", "unrecognized_substance"] {
+        for start in RD_LADDER {  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+            cons = [
+                Concern(kind=kind, anchor="y", evidence=[], since="", action=start),
+                Concern(kind="adherence_gap", anchor="y", evidence=[], since="", action="log"),
+            ];
+            rd_corroborate(cons);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+            before = RD_LADDER.index(start);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+            after = RD_LADDER.index(cons[0].action);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+            assert after >= before, f"A5 VIOLATED: {kind} went {start} -> {cons[0].action}";
+            assert after <= before + 1, f"more than one rung: {kind} {start} -> {cons[0].action}";
+        }
+    }
+}
+
+
+# THE ONE THIS ISSUE EXISTS TO PROTECT. Corroboration is additive, never a precondition. Prior art
+# raised precision by REQUIRING corroboration before escalating; that turns the two-channel split
+# into a silent-failure generator. A lone channel B hit reaches `ask` on its own.
+test "a single uncorroborated channel B hit still reaches ask" {
+    cons = [Concern(kind="interaction", anchor="solo", evidence=[], since="", action="ask")];
+    moved = rd_corroborate(cons);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    assert moved == 0, "nothing corroborates it, so nothing moves";
+    assert cons[0].action == "ask", "and it is STILL ask — corroboration is not a gate";
+}
+
+
+# Two rows from ONE mechanism are not two mechanisms agreeing. Without the distinct-kind check, a
+# symptom with two additive-toxicity pairs would promote itself.
+test "two concerns of the same kind on one anchor do not corroborate each other" {
+    cons = [
+        Concern(kind="additive_toxicity", anchor="w", evidence=[], since="", action="log"),
+        Concern(kind="additive_toxicity", anchor="w", evidence=[], since="", action="log"),
+    ];
+    moved = rd_corroborate(cons);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    assert moved == 0, "one mechanism finding two pairs is still one mechanism";
+}
+
+
+# S6/CONTRACTS §3 as a TOTAL assertion over every concern any fixture in this file produces. This
+# is what compensates for the kind-specific counts elsewhere: a new mechanism that emits above its
+# ceiling gets caught here even though no other test was looking at it.
+test "no mechanism ever emits above its ceiling" {
+    for key in ["m1_ondansetron", "m1i_st_johns_wort", "a1_diarrhea", "a4_imatinib",
+                "b1_peripheral_neuropathy", "b3_imatinib", "b4_naproxen", "b6_ondansetron"] {
+        r = root spawn Recall(anchors=[key]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+        for c in r.reports[0].concerns {
+            ceil = RD_CEILINGS.get(c.kind, "mention");  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+            assert RD_LADDER.index(c.action) <= RD_LADDER.index(ceil),  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+                f"{c.kind} emitted at {c.action}, above its ceiling {ceil}";
+            assert (c.action != "escalate") or (c.kind == "emergency"),
+                f"S6: {c.kind} reached escalate — that rung is rd_emergency's alone";
+        }
+    }
+}
+
+
+# ==========================================================================================
+# #14 — Investigate. Lazy, read-only, zero LLM.
+# ==========================================================================================
+
+# ACCEPTANCE (#14): onset date, at least 3 timeline entries, every entry carrying a source.
+test "expanding a row returns a case file with onset, timeline, and a source on every entry" {
+    t = "i1_";
+    drug = Anchor(key=t + "ondansetron", kind="ingredient");
+    cls = Anchor(key=t + "QT-prolonging", kind="class");
+    sym = Anchor(key=t + "qt_prolongation", kind="symptom");
+    root ++> drug;
+    root ++> cls;
+    root ++> sym;
+    drug +>:Member(via="class_member"):+> cls;
+    cls +>:Member(via="toxicity_of"):+> sym;
+
+    ur = Utterance(text="Ondansetron 8mg for the nausea.", at="2026-02-10", role="oncologist");
+    root ++> ur;
+    b = Belief(claim="regimen: ondansetron");
+    root ++> b;
+    b +>:About:+> drug;
+    b +>:DerivedFrom:+> ur;
+
+    for d in ["2026-03-01", "2026-03-08", "2026-03-15"] {
+        uo = Utterance(text="Heart felt fluttery again.", at=d, role="patient");
+        root ++> uo;
+        o = Observation(metric="qt_prolongation", value=3.0, at=d);
+        root ++> o;
+        o +>:Reports:+> sym;
+        o +>:DerivedFrom:+> uo;
+    }
+
+    r = root spawn Investigate(concern_kind="additive_toxicity", anchor=t + "qt_prolongation");  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    cf = r.reports[0];
+
+    assert cf.onset == "2026-03-01", f"onset is first observation, got {cf.onset}";
+    assert len(cf.timeline) >= 3, f"expected >= 3 timeline entries, got {len(cf.timeline)}";
+    for e in cf.timeline {
+        assert e.source != "", f"S2: a timeline entry with no source: {e.what}";
+        assert e.at != "", f"an undated timeline entry: {e.what}";
+    }
+    # Step 2: the regimen change is on the timeline next to the onset, which is the whole point.
+    starts = [];
+    for e in cf.timeline { if "started" in e.what { starts.append(e.at); } }
+    assert "2026-02-10" in starts, f"the regimen change should be on the timeline, got {starts}";
+    assert len(cf.citations) > 0, "every case file is citable or it is not shown";
+    # Chronological and stable.
+    ats = [];
+    for e in cf.timeline { ats.append(e.at); }
+    assert ats == sorted(ats), f"timeline out of order: {ats}";
+}
+
+
+# Step 4: an existing instruction changes the row from "report this" to "you were already told".
+# The instruction comes back VERBATIM (S8) — a summary of a clinician's sentence is generated text.
+test "an anchor with an existing instruction returns the already-covered variant" {
+    t = "i2_";
+    sym = Anchor(key=t + "fever", kind="symptom");
+    root ++> sym;
+    ui = Utterance(text="Call the clinic immediately if your temperature goes over 100.4.",
+                   at="2026-06-01", role="oncologist");
+    root ++> ui;
+    c = Constraint(claim="fever over 100.4 is a reason to call", hard=True,
+                   threshold_level=100.4, threshold_metric="fever");
+    root ++> c;
+    c +>:Governs:+> sym;
+    c +>:DerivedFrom:+> ui;
+
+    r = root spawn Investigate(concern_kind="persistence", anchor=t + "fever");  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    cf = r.reports[0];
+    assert cf.existing_instruction == "Call the clinic immediately if your temperature goes over 100.4.",
+        f"verbatim, not summarised — got {cf.existing_instruction}";
+}
+
+
+# Step 3, the counterfactual: days the drug was absent from the record, and whether the symptom
+# was absent too. Named the drop candidate in #14 if the schedule slipped.
+test "the counterfactual finds a stretch with no record of the drug" {
+    t = "i3_";
+    drug = Anchor(key=t + "capecitabine", kind="ingredient");
+    root ++> drug;
+    u = Utterance(text="Capecitabine 1250mg twice daily.", at="2026-01-05", role="oncologist");
+    root ++> u;
+    b = Belief(claim="regimen: capecitabine");
+    root ++> b;
+    b +>:About:+> drug;
+    b +>:DerivedFrom:+> u;
+    # Logged, then a three-week hole, then logged again.
+    for d in ["2026-02-01", "2026-02-02", "2026-02-25"] {
+        uo = Utterance(text="took it", at=d, role="patient");
+        root ++> uo;
+        o = Observation(metric="capecitabine", value=1.0, at=d);
+        root ++> o;
+        o +>:Reports:+> drug;
+        o +>:DerivedFrom:+> uo;
+    }
+
+    r = root spawn Investigate(concern_kind="adherence_gap", anchor=t + "capecitabine");  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    cf = r.reports[0];
+    assert "2026-02-02" in cf.counterfactual and "2026-02-25" in cf.counterfactual,
+        f"expected the 02-02 -> 02-25 hole, got '{cf.counterfactual}'";
+}
+
+
+# S3: an anchor that is not in the record returns an empty case file, not a reassuring one.
+test "Investigate on an unknown anchor returns an empty case file" {
+    r = root spawn Investigate(concern_kind="persistence", anchor="i4_not_a_real_anchor");  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    cf = r.reports[0];
+    assert cf.onset == "", "no onset for something that is not in the record";
+    assert len(cf.timeline) == 0;
+    assert cf.existing_instruction == "";
+    # Exactly one report, even on the disengage path.
+    assert len(r.reports) == 1, f"expected one report, got {len(r.reports)}";
+}
+
+
+# ==========================================================================================
 # #9 — the emergency bypass. EVERYTHING BELOW IS ORDER-SENSITIVE; see note 3 in the header.
 # Non-firing fixtures first (e1–e5), firing fixtures last (e6–e8).
 # ==========================================================================================
@@ -800,7 +1430,7 @@ test "an emergency criterion below its threshold does not fire, and channel B ru
     r = root spawn Recall(anchors=[t + "fever"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) == 0, "99.1 is below 100.4 — the bypass must not fire";
+    assert rd_kind_count(v.concerns, "emergency") == 0, "99.1 is below 100.4 — the bypass must not fire";
     assert len(v.violations) == 1, "channel B must still run and return the constraint";
     assert not v.allowed, "it is still a hard constraint";
 }
@@ -829,7 +1459,8 @@ test "an observation of zero never fires an emergency criterion" {
     r = root spawn Recall(anchors=[t + "rash"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) == 0, "reporting the ABSENCE of a symptom must not raise the alarm";
+    assert rd_kind_count(v.concerns, "emergency") == 0,
+        "reporting the ABSENCE of a symptom must not raise the alarm";
     assert len(v.violations) == 1, "channel B runs normally";
 }
 
@@ -861,7 +1492,8 @@ test "a superseded emergency constraint does not fire" {
     r = root spawn Recall(anchors=[t + "nausea"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) == 0, "Supersedes kills an emergency constraint like any other";
+    assert rd_kind_count(v.concerns, "emergency") == 0,
+        "Supersedes kills an emergency constraint like any other";
     assert len(v.violations) == 0, "and channel B drops it too";
 }
 
@@ -890,7 +1522,7 @@ test "threshold_days requires that many distinct dates" {
 
     r = root spawn Recall(anchors=[t + "mouth-pain"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
-    assert len(v.concerns) == 0, "three readings on one day is one day, not two";
+    assert rd_kind_count(v.concerns, "emergency") == 0, "three readings on one day is one day, not two";
 }
 
 
@@ -923,7 +1555,8 @@ test "an uncitable emergency constraint blocks, emits no Concern, and falls thro
     r = root spawn Recall(anchors=[t + "bleeding"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) == 0, "a Concern `pg_row` would drop must not be fabricated";
+    assert rd_kind_count(v.concerns, "emergency") == 0,
+        "a Concern `pg_row` would drop must not be fabricated";
     assert not v.allowed, "the criterion was met — the blocking answer survives";
     assert len(v.violations) == 1, "no disengage: channel B must still have run";
 
