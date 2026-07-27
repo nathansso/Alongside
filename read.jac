@@ -32,6 +32,12 @@ import from graph {
     Anchor, Belief, Concern, Constraint, Observation, Preference, Utterance, Verdict, Violation,
     About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
 }
+import from datetime { date }
+
+
+# Vigil (#21) thresholds. Kept as globs so they read as policy, not magic numbers buried in a walker.
+glob VIGIL_SILENCE_DAYS: int = 3;    # a 4-day gap (the acceptance) is well past this
+glob VIGIL_RECUR_DAYS: int = 2;      # a symptom on >= 2 distinct days is "recurring"
 
 
 # ==========================================================================================
@@ -729,6 +735,143 @@ walker:pub Recall {
     # --- Root exit: assemble and report exactly once -------------------------------------
     can rd_finish with Root exit {
         self.out.allowed = not self.rd_hard_hit;
+        report self.out;
+    }
+}
+
+
+# ==========================================================================================
+# `Vigil` — unprompted checks on app open (#21)
+# ==========================================================================================
+#
+# Spawned on app open before any input exists (`root spawn Vigil(today=…)` from the cl { } block).
+# `:pub` for the same reason as `Recall` (#34) — a plain `walker` answers Unauthorized. It is pure
+# CALENDAR ARITHMETIC over the provenance floor (`Observation`/`Utterance`) and parsed instruction
+# `Constraint`s: ZERO `by llm()`, and A9 read-only — it never scores, reinforces, decays, or writes
+# an edge. Every concern it raises is `mention`, the alert-fatigue ceiling (S6): Vigil surfaces,
+# it never alarms. `today` is handed in, never a wall clock, so a run is reproducible (the demo is
+# byte-identical). Alert-fatigue by design: it can surface one thing and stay silent about others.
+
+# Whole days from `earlier` to `later` (ISO YYYY-MM-DD). Calendar arithmetic, not `by llm()` — this
+# is the "phase is subtraction over a parsed date" line of ARCHITECTURE §3, applied to check-ins.
+def rd_days_between(earlier: str, later: str) -> int {
+    d0: date = date.fromisoformat(earlier);
+    d1: date = date.fromisoformat(later);
+    delta: any = d1 - d0;   # jac:ignore[W1037] — timedelta from stdlib; .days is the whole-day count
+    return delta.days;
+}
+
+
+# The most-recent `Utterance` behind a set of `Observation`s, as a 0-or-1 list (same 0-or-1 idiom as
+# rd_latest_source / rd_regimen_source). An `Observation` carries `DerivedFrom` to its `Utterance`
+# (graph.jac §3), so this is the patient's own words to quote back — S2's citation for the row.
+def rd_symptom_voice(obs: list[Observation]) -> list[Utterance] {
+    best: list[Utterance] = [];
+    for o in obs {
+        for u in [o ->:DerivedFrom:->] {
+            if len(best) == 0 or u.at > best[0].at {
+                best = [u];
+            }
+        }
+    }
+    return best;
+}
+
+
+walker:pub Vigil {
+    has today: str;
+    has out: Verdict = Verdict();
+
+    # Internal only — feeds the activity panel / #16 eval (CONTRACTS §4). Not a wire field.
+    has rd_notes: list[str] = [];
+
+    can rd_open with Root entry {
+        # Depth 1 from root, matching rd_start / rd_emergency / main.jac's pg_status. If the seed
+        # attaches these deeper this surfaces nothing and reports an empty Verdict — no error, and
+        # rd_notes stays empty; flagged to the seed loader (#7), same assumption as Recall.
+        utts: list[Utterance] = [here -->[?:Utterance]];
+        anchors: list[Anchor] = [here -->[?:Anchor]];
+
+        # ---- silence: the record has gone quiet ----
+        # The patient's own most-recent check-in is both the clock and the citation. This is the one
+        # Vigil check that fires on what ISN'T there — the exact failure the `silence` class exists
+        # to catch (ARCHITECTURE §5): a graph that stops accumulating goes undetectable otherwise.
+        last: list[Utterance] = [];
+        for u in utts {
+            if u.role == "patient" or u.role == "caregiver" {
+                if len(last) == 0 or u.at > last[0].at {
+                    last = [u];
+                }
+            }
+        }
+        if len(last) > 0 {
+            gap: int = rd_days_between(last[0].at, self.today);
+            if gap >= VIGIL_SILENCE_DAYS {
+                self.out.concerns.append(
+                    Concern(
+                        kind="silence",
+                        anchor="daily-check-in",
+                        evidence=[jid(last[0])],
+                        since=last[0].at,
+                        action="mention"
+                    )
+                );
+            }
+        }
+
+        # ---- supportive-care gap: a symptom recurs with no instruction covering it ----
+        # A symptom the patient keeps reporting for which NOTHING in the record is an instruction
+        # (`Governs`/`Excludes` from a `Constraint`). Absence of a finding is "not in your record",
+        # never "safe" (S3) — worth mentioning, never an alarm (S6 => `mention`).
+        for a in anchors {
+            if a.kind != "symptom" {
+                continue;
+            }
+            sym_obs: list[Observation] = [a <-:Reports:<-];
+            dates: list[str] = rd_distinct_dates(sym_obs);
+            if len(dates) < VIGIL_RECUR_DAYS {
+                continue;
+            }
+            # An instruction already touches this symptom -> not a gap.
+            if len(rd_touching_constraints(a)) > 0 {
+                continue;
+            }
+            cite: list[Utterance] = rd_symptom_voice(sym_obs);
+            if len(cite) == 0 {
+                # S2: no `Utterance` to quote -> pg_row would drop the row. Record, don't fabricate.
+                self.rd_notes.append("supportive-care gap with no citable check-in: " + a.key);
+                continue;
+            }
+            ev: list[str] = [jid(cite[0])];
+            for o in sym_obs {
+                ev.append(jid(o));
+            }
+            self.out.concerns.append(
+                Concern(
+                    kind="supportive_care_gap",
+                    anchor=a.key,
+                    evidence=ev,
+                    since=dates[0],
+                    action="mention"
+                )
+            );
+        }
+
+        # ---- adherence_gap and phase transition: DEFERRED, on purpose ----
+        # Both are pure arithmetic too, but they read conventions that are not yet locked in the
+        # seed, so shipping them now would be unverifiable detection in a file that tests everything:
+        #   - adherence_gap is "silent absence" (#3/#7): a regimen ingredient anchor with zero record
+        #     since its prescription. There is no `taken` metric — absence is the signal — so this
+        #     needs the seed's adherence design (#7) fixed to assert against.
+        #   - phase transition needs the `phase` anchors / `cycle_days` that #4 computes at
+        #     regimen-parse time. `rd_days_between(regimen_date, today)` vs `cycle_days` is the whole
+        #     check; it just needs a parsed regimen to run against.
+        # Both slot into this same `rd_open` with one loop each once #7/#4 land. Tracked on #21.
+    }
+
+    can rd_close with Root exit {
+        # A9: strictly read-only. `allowed` stays True — Vigil never blocks, and by S6 it never
+        # reaches `ask` or `escalate`; everything it appended above is `mention`.
         report self.out;
     }
 }
