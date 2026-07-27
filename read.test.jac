@@ -695,7 +695,7 @@ test "a superseded belief is skipped by channel A" {
     new +>:Supersedes:+> old;
 
     r = root spawn Recall(anchors=[t + "docusate"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
-    v = r.reports[0];
+    v: Verdict = r.reports[0] as Verdict;   # type the report; `in`/`not in` on Any-typed v.soft is E1111 (0.34.5)
     assert "regimen: docusate old" not in v.soft, "a superseded belief must not be collected";
     assert "regimen: docusate new" in v.soft, "the live belief must be collected";
 }
@@ -717,7 +717,7 @@ test "channel A beam limits fanout at the Anchor step regardless of budget" {
     }
 
     r = root spawn Recall(anchors=[t + "docusate"], budget=10, beam=2);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
-    v = r.reports[0];
+    v: Verdict = r.reports[0] as Verdict;   # type the report; `in` on Any-typed v.soft is E1111 (0.34.5)
 
     assert len(v.soft) == 2, f"beam=2 must cap Anchor-step fanout at 2 regardless of budget=10, got {len(v.soft)}";
     assert (t + "b1") in v.soft and (t + "b2") in v.soft, "the two highest-strength candidates must be chosen";
