@@ -29,7 +29,8 @@
 # below infers `any` — and because the locals here are annotated, that surfaces as five E1001s
 # instead of passing `jac check` and dying at the first field read. Import the edges you traverse.
 import from graph {
-    Anchor, Belief, Concern, Constraint, Observation, Preference, Utterance, Verdict, Violation,
+    Anchor, Belief, CaseFile, Concern, Constraint, Observation, Preference, TimelineEntry,
+    Utterance, Verdict, Violation,
     About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes, Relates, Shortcut
 }
 import from datetime { date }
@@ -1184,5 +1185,130 @@ walker:pub Vigil {
         # A9: strictly read-only. `allowed` stays True — Vigil never blocks, and by S6 it never
         # reaches `ask` or `escalate`; everything it appended above is `mention`.
         report self.out;
+    }
+}
+
+
+# ==========================================================================================
+# `Investigate` — lazy case-file assembly (#14, renders in #23)
+# ==========================================================================================
+#
+# Spawned ONLY when the patient expands an `ask` row (`root spawn Investigate(concern_kind=…,
+# anchor=…)` from page.cl.jac; the page memoizes by row id so collapse/re-expand never re-spawns).
+# `:pub` for the client spawn (#34). It is all graph traversal + date arithmetic — ZERO `by llm()`,
+# A9 read-only. `anchor` arrives as the anchor KEY (Prepare sets Row.id to the key; the page passes
+# anchor=row.id). This is the difference between a detector and a companion (ARCHITECTURE §4).
+
+# Patient-facing attribution for the case-file "source" column. UI chrome, not care prose — same
+# role->label map page.cl.jac uses for citations; kept here because Investigate assembles the text.
+def rd_voice_label(role: str) -> str {
+    if role == "patient" { return "you"; }
+    if role == "caregiver" { return "you (caregiver)"; }
+    if role == "oncologist" { return "your oncology team"; }
+    if role == "pharmacist" { return "your pharmacist"; }
+    if role == "label" { return "your pharmacy label"; }
+    return role;
+}
+
+# Named sort key — `sorted(..., key=fn)` over TimelineEntry. ISO YYYY-MM-DD sorts chronologically as
+# a plain string, so no date parse is needed to order the timeline.
+def rd_tl_at(e: TimelineEntry) -> str {
+    return e.at;
+}
+
+
+walker:pub Investigate {
+    has concern_kind: str;
+    has anchor: str;
+    has out: CaseFile = CaseFile();
+
+    # Internal only — activity panel / eval (CONTRACTS §4). Not a wire field.
+    has rd_notes: list[str] = [];
+
+    can rd_lookup with Root entry {
+        # Deterministic key resolution, no model (A3). Depth 1 from root, same assumption as
+        # rd_start / Vigil.
+        known: list[Anchor] = [here -->[?:Anchor]];
+        target: list[Anchor] = [];
+        for a0 in known {
+            if a0.key == self.anchor {
+                target = [a0];
+            }
+        }
+        if len(target) == 0 {
+            # S3: absence is "not in your record", never "safe". Empty CaseFile is reported as-is;
+            # page.cl.jac renders nothing rather than fabricating a case file.
+            self.rd_notes.append("not in your record: " + self.anchor);
+        } else {
+            a: Anchor = target[0];
+            entries: list[TimelineEntry] = [];
+            cites: list[str] = [];
+
+            # Steps 1 + 5: the symptom's own Observations, each dated and cited to the check-in that
+            # reported it. `what` is the patient's VERBATIM words (S8 by quotation), `source` the
+            # attribution.
+            obs: list[Observation] = [a <-:Reports:<-];
+            for o in obs {
+                src: list[Utterance] = [o ->:DerivedFrom:->];
+                what: str = "reported " + a.key;
+                source: str = "you";
+                if len(src) > 0 {
+                    what = src[0].text;
+                    source = rd_voice_label(src[0].role);
+                    cites.append(jid(src[0]));
+                }
+                cites.append(jid(o));
+                entries.append(TimelineEntry(at=o.at, what=what, source=source));
+            }
+
+            # Step 2: the regimen event, when this anchor is itself an active-regimen drug — its
+            # date and prescriber come straight off the regimen belief's Utterance (graph.jac's
+            # definition), so the timeline can show "started X" against the symptom's onset.
+            reg: list[Utterance] = rd_regimen_source(a);
+            if len(reg) > 0 {
+                entries.append(
+                    TimelineEntry(
+                        at=reg[0].at,
+                        what="started " + a.key,
+                        source=rd_voice_label(reg[0].role)
+                    )
+                );
+                cites.append(jid(reg[0]));
+            }
+
+            # Order the timeline; onset is the earliest dated event (step 1's "first onset").
+            self.out.timeline = sorted(entries, key=rd_tl_at);
+            if len(self.out.timeline) > 0 {
+                self.out.onset = self.out.timeline[0].at;
+            }
+
+            # Step 4: an existing instruction on this anchor flips the row from "report this" to
+            # "the instruction you were given already covers this". Its claim is parsed from the
+            # patient's own artifact (#4), so quoting it is S8-safe; require a citation (S2).
+            for c in rd_touching_constraints(a) {
+                icite: list[Utterance] = rd_latest_source(c);
+                if len(icite) > 0 {
+                    self.out.existing_instruction = c.claim;
+                    cites.append(jid(icite[0]));
+                    break;
+                }
+            }
+
+            # Step 3 (the drop-candidate — light version): when NOTHING instructs on this anchor,
+            # that absence is the reason to ask (S3). Template, never generated. When an instruction
+            # already covers it, the counterfactual is empty — the "already covered" variant speaks
+            # for itself.
+            if self.out.existing_instruction == "" {
+                self.out.counterfactual =
+                    "Nothing on your current record names this as a known effect. That absence is "
+                    + "why it is worth raising rather than assuming it is expected.";
+            }
+
+            self.out.citations = cites;
+        }
+    }
+
+    can rd_emit with Root exit {
+        report self.out;   # one typed CaseFile, once, from Root exit (CONTRACTS §4)
     }
 }
