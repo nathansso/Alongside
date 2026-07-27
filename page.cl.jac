@@ -397,7 +397,7 @@ def:pub CheckInSurface(onSubmit: Callable[[str], None]) -> JsxElement {
         Rec = g.SpeechRecognition or g.webkitSpeechRecognition;   # jac:ignore[W2001, W6002]
         if not Rec { supported = False; return; }
         base = text;
-        _pg_rec = new(Rec);   # jac:ignore[W2001, W6002]
+        _pg_rec = new(Rec);   # jac:ignore[W2001, W6002, E1053]
         rec = _pg_rec;
         rec.continuous = False;
         rec.interimResults = True;
@@ -542,7 +542,13 @@ def:pub ConcernsPage() -> JsxElement {   # jac:ignore[W3005]
         } except Exception as e {
             console.log("[page] Investigate unavailable — rendering fixture:", e);   # jac:ignore[W2001, W6002]
         }
-        merged: dict[str, CaseFile] = {**case_files};   # typed local; bare spread infers a union (#46)
+        # #46/#60: bare dict-spread {**case_files} infers dict[Unknown, dict[str, CaseFile]]
+        # instead of dict[str, CaseFile] even with an explicit typed local -- a manual copy loop
+        # sidesteps the spread-inference bug entirely.
+        merged: dict[str, CaseFile] = {};
+        for k in case_files {
+            merged[k] = case_files[k];
+        }
         merged[rid] = cf;
         case_files = merged;
     }
