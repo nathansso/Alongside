@@ -47,7 +47,98 @@ The person best positioned to see the slope is often the caregiver who sees the 
 - **Two channels.** Channel A (soft preferences) is scored, beam-limited, decaying. Channel B (hard constraints) is exhaustive, unscored, and exempt from decay and budget; only a `Supersedes` edge kills it, and emergencies are evaluated first.
 - **Six walkers, two model calls.** `Vigil` (unprompted on open), `Remember` (write, extraction), `Recall` (both channels, detection, corroboration, emergency bypass), `Consolidate` (self-budgeted rewrite, satisfiability), `Investigate` (lazy case file, no model call), `Prepare` (renders the page). Exactly two `by llm()` sites, both on the write path; the read path has zero. We refused `visit [-->] by llm()` on purpose: letting the model pick the path would void the Channel B guarantee. Roughly fifty MockLLM tests cover the read path.
 
-**Why Jac, and why JacHammer.** Object-Spatial Programming makes traversal first-class, so "relevance is reachability" is the literal control flow, not a slogan; the safety property lives _in_ the code. `by llm()` makes a two-call autonomy budget a greppable invariant, and `jac check` catches client-and-server contract drift a TypeScript plus mypy stack cannot see. JacHammer deploys graph, walkers, model calls, and UI as **one git-native artifact**: `main.jac` is a real single-file full-stack slice, no separate frontend, no separate Python service, and per-patient isolation is a language property because there is no query surface on which two patient graphs could reach each other.
+**Why Jac, and why JacHammer.** Every load-bearing property of Alongside is a Jac language feature we leaned on directly, not a library we bolted on. The full, feature-by-feature account is in _How we use Jac_ below.
+
+## How we use Jac
+
+Jac is not the implementation detail of Alongside; it is the reason Alongside can make the claim it makes. We did not port a design onto Jac. The design _is_ a set of Jac features, and in any other stack the central safety guarantee would have been something we tested for rather than something the language enforces. Here is how, feature by feature.
+
+### The graph is the program (Object-Spatial Programming)
+
+We model the entire clinical record as **nodes and typed edges**, and every act of remembering as a **walker traversing them**. A check-in is an `Utterance`; a measurement is an `Observation`; a medication or symptom is an `Anchor`; what we infer is a `Belief`, with `Preference` and `Constraint` as subtypes. Relationships are first-class, typed, and carry their own attributes:
+
+```jac
+node Belief { has claim: str; has strength: float = 1.0; has uses: int = 0; }
+node Constraint(Belief) { has hard: bool = True; }          # inherits Belief
+
+edge About:      Belief    --> Anchor { has weight: float = 1.0; }
+edge Member:     Anchor    --> Anchor { has via: str; }       # the vocabulary lattice
+edge Governs:    Constraint --> Anchor {}
+edge Supersedes: Belief    --> Belief {}                      # the only thing that kills a constraint
+```
+
+In a conventional stack the "graph" is rows in a table plus a query planner you do not control, and "relevance" is whatever the planner or the vector index decides. In Jac the graph is the data structure and `visit` is the query, so **"relevance is reachability" is not a metaphor, it is the literal semantics of the program.** The load-bearing demo, `grapefruit -> CYP3A4 inhibitor -> CYP3A4 substrate -> imatinib`, is three `Member` hops, and the fact that it is a path is the entire point.
+
+### Walkers are the compute model, and policy lives on the nodes
+
+Each of our six behaviors is a `walker` archetype with its own typed `has` state and `report` channel. A walker does not run a loop over rows; it moves through the graph, and the graph decides what happens when it arrives. That is expressed with **node-type abilities**, and Jac's inheritance makes the safety rules fall out of the type hierarchy:
+
+```jac
+node Belief {
+    can score with Recall entry {          # every belief scores the same way
+        here.uses += 1;
+        # ... beam, decay, waterline ...
+    }
+}
+node Constraint(Belief) {
+    can gate with Recall entry {            # a hard constraint hard-overrides
+        # reached exhaustively in Channel B; a hit is an "ask", every time,
+        # uncorroborated, exempt from decay and budget
+        report Concern(kind="interaction", anchor=here.claim, action="ask");
+    }
+}
+```
+
+Because the policy sits on the node types, **`Recall` contains no `while` loop and no branching over "what kind of belief is this"**: one ability serves every belief, a second overrides for constraints, and the traversal wires itself. `with entry` and `with exit` abilities, `visit`, `report`, `here`, and `disengage` are the whole vocabulary, and they were exactly the right vocabulary for a retrieval engine whose correctness is about _where you can walk_.
+
+### `by llm()`: autonomy as a first-class, countable construct
+
+The model touches Alongside in exactly **two places**, and both are a single Jac keyword. `by llm()` delegates a function body to a model and hands back a **typed object**, so we never hand-parse JSON and never let free text leak past the boundary:
+
+```jac
+"""Turn a raw check-in into typed structure. Anchors are resolved against the
+closed vocabulary afterward; a miss sets needs_review and invents nothing."""
+def extract(text: str, at: str) -> Extraction by llm();     # write-path site 1
+
+def satisfiable(a: str, b: str) -> Conflict by llm();        # write-path site 2, in Consolidate
+```
+
+This is where Jac quietly won the safety argument for us. "Keep the model on a leash" is normally a code-review aspiration; in Jac it is `grep 'by llm('` returning **exactly two hits, both on the write path**. We prompt-tune with `sem` and docstrings, we test every one of them with **MockLLM** so the suite makes no network calls, and `DEMO_MODE` branches at these two sites alone, which is why the entire demo runs with **zero live model calls**. And the primitive we most wanted to avoid, `visit [-->] by llm()`, letting the model choose where to walk, is a thing Jac _offers_ and we _refused_; being able to point at its absence is only possible because the language makes model-driven control flow a visible, first-class thing.
+
+### Typed state that crosses the wire for free
+
+Every archetype carries typed `has` fields, and our report objects (`Verdict`, `Concern`, `PageModel`, `Row`, `Citation`) are ordinary Jac `obj`s that **hydrate into typed instances on the browser side** when a walker `report`s them. There is no DTO layer, no serializer, no client-side schema we keep in sync by hand. The shape the walker builds is the shape the page renders.
+
+### The full stack, in one language and one file
+
+`main.jac` is a **mixed-context** module: server archetypes and walkers at the top, the client UI inside a `cl { }` block. The page is React written in Jac, a `def:pub` returning `JsxElement`, and it talks to the server the one blessed way, by spawning a walker with kwargs and reading its typed reports:
+
+```jac
+def:pub ConcernsPage() -> JsxElement {
+    has model: PageModel = PageModel();
+    async can with entry {
+        result = root spawn Prepare(include_log=True);   # kwargs -> walker `has` fields
+        model = result.reports[0];                        # typed PageModel, hydrated
+    }
+    return <section>{ for r in model.ask { <Row row={r} /> } }</section>;
+}
+```
+
+There is **no REST layer we wrote, no `fetch`, no GraphQL, no OpenAPI**. The client and server share the same archetypes, so the contract between them is the type system, not a hand-maintained schema. Even the voice check-in stays in Jac: we reach the browser Web Speech API through Jac's JS interop (`new(...)`, `.call(None, ...)`, `globalThis`, `glob` module state), so there is no npm dependency and no separate JavaScript file.
+
+### `jac check`: one type system across a seam nothing else can see
+
+A single `jac check` type-checks the graph schema, the server walkers, and the client together. Change a walker's signature and the **exact** client `root spawn` line lights up, a class of contract drift a conventional TypeScript-plus-mypy stack is blind to because the boundary is a network call to those tools. This is also what made our "develop in five files, ship one" workflow mechanical rather than terrifying: Jac archetypes are **flat within a module**, so collapsing five files into `main.jac` is concatenation plus deleting import lines, and `jac check` is the gate that proves it still holds together.
+
+### Persistence and isolation come from the language, not from us
+
+Node and edge archetypes **persist automatically**, rooted per user on the built-in SQLite backend. We wrote no migrations, no ORM, no tenancy layer, and yet **per-patient isolation is total**: one patient's graph is unreachable from another's because there is no query surface on which the two could meet. A property we would normally have to build, audit, and pray about is, in Jac, simply the default.
+
+### JacHammer: the whole thing ships as a single artifact
+
+JacHammer took "single-file full-stack" from a slogan to the literal shape of the deliverable. It is a **git-native browser IDE** where graph, walkers, `by llm()` calls, and UI deploy as **one artifact** against the same history a human commits to. Configuration is a project-scoped environment variable (`DEMO_MODE` lives there and is read at process start), the client surface hot-reloads while server modules stay put, and a three-person, four-day fan-out lived in that one project without fracturing. No separate frontend host, no separate Python service, no container to orchestrate: one language, one file, one deploy.
+
+**In short:** Jac let us write, in one language and one file, a graph database, a multi-hop retrieval engine, a bounded two-call LLM layer, and a browser UI, and it turned our central promise, _the model never decides what the patient reads or where the search walks_, from something we merely test into something the language makes true. We have shipped full-stack apps before. We have never shipped one where the architecture and the safety guarantee were the same object.
 
 ## What's real vs. seeded
 
