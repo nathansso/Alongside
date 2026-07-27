@@ -1,4 +1,4 @@
-# myCancerPal
+# Alongside
 
 A longitudinal treatment companion for cancer patients, built on a persistent Jac graph.
 
