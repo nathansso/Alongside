@@ -130,7 +130,7 @@ def wr_seed_vocabulary(at_root: Root) -> dict {
     for a in VOCAB_ANCHORS {
         key: str = str(a["key"]);
         kind: str = str(a["kind"]);
-        n = (at_root ++> Anchor(key=key, kind=kind))[0];
+        n = (at_root ++> Anchor(key=key, kind=kind));
         created[key] = n;
     }
 
@@ -458,7 +458,7 @@ def wr_write_regimen(at_root: Root, source: Utterance, regimen_text: str) -> dic
         key: str = str(a["key"]);
         anchor: Anchor | None = wr_find_anchor(at_root, key);
         if anchor is not None {
-            b = (at_root ++> Belief(claim="on " + key))[0];
+            b = (at_root ++> Belief(claim="on " + key));
             b +>:DerivedFrom():+> source;
             b +>:About(weight=1.0):+> anchor;
             written.append(b);
@@ -492,7 +492,7 @@ def wr_write_instruction(at_root: Root, source: Utterance, instruction_text: str
         threshold_level=float(str(parsed["threshold"])),
         threshold_days=0,
         threshold_metric=anchor_key
-    ))[0];
+    ));
     c +>:DerivedFrom():+> source;
     c +>:Governs():+> anchor;
     return c;
@@ -714,7 +714,7 @@ walker:pub Remember {
     has out: Verdict = Verdict();
 
     can go with Root entry {
-        utt = (here ++> Utterance(text=self.text, at=self.at, role=self.role))[0];
+        utt = (here ++> Utterance(text=self.text, at=self.at, role=self.role));
 
         # Deterministic instruction parsing runs regardless of by llm() extraction — threshold
         # evaluation must never depend on a model (ARCHITECTURE.md §8's "seven places that must
@@ -737,7 +737,7 @@ walker:pub Remember {
                 metric=extraction.observation.metric,
                 value=extraction.observation.value,
                 at=self.at
-            ))[0];
+            ));
             obs +>:DerivedFrom():+> utt;
         }
 
@@ -746,7 +746,7 @@ walker:pub Remember {
             needs_review: bool = bool(guard["needs_review"]);
             anchor_key: str = str(guard["anchor_key"]);
 
-            b = (here ++> Belief(claim=belief.claim, needs_review=needs_review))[0];
+            b = (here ++> Belief(claim=belief.claim, needs_review=needs_review));
             b +>:DerivedFrom():+> utt;
 
             if anchor_key != "" {
@@ -1058,7 +1058,7 @@ def wr_wire_interactions(at_root: Root) -> list[Constraint] {
         }
 
         because: str = str(pair["because"]);
-        c = (at_root ++> Constraint(claim=because, hard=False))[0];
+        c = (at_root ++> Constraint(claim=because, hard=False));
         a_src: Utterance | None = wr_utterance_for_anchor_key(at_root, a_key);
         if a_src is not None {
             c +>:DerivedFrom():+> a_src;
