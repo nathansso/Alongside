@@ -392,8 +392,9 @@ test "two independently prescribed drugs converging on one symptom raise one add
 
     # Resolved the way `pg_cites` will resolve them, so the acceptance criterion is checked
     # literally and not by proxy: two DIFFERENT prescribers, two DIFFERENT dates.
-    e0 = jobj(con.evidence[0]);
-    e1 = jobj(con.evidence[1]);
+    # `jobj` returns an untyped node on jac 0.34.5; cast so `.role`/`.at` resolve (E1030 otherwise).
+    e0: Utterance = jobj(con.evidence[0]) as Utterance;
+    e1: Utterance = jobj(con.evidence[1]) as Utterance;
     assert e0.role == "oncologist" and e0.at == "2026-02-10", "prescriber A and date A";
     assert e1.role == "pharmacist" and e1.at == "2026-05-03", "prescriber B and date B";
 
