@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  body { margin: 0; background: #F7F6F3; }
+  a { color: #2F6D64; text-decoration: none; }
+  a:hover { color: #1F4A44; text-decoration: underline; }
+  @keyframes pulse { 0%,100% { opacity: 0.25; transform: scaleY(0.4); } 50% { opacity: 1; transform: scaleY(1); } }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+</style>
+</helmet>
+<div style="font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #1C2321; background: #F7F6F3; min-height: 100vh; -webkit-font-smoothing: antialiased;">
+
+  <sc-if value="{{ isLanding }}" hint-placeholder-val="{{ true }}">
+    <div style="display: flex; flex-direction: column;">
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 22px 32px; max-width: 1080px; margin: 0 auto; width: 100%; box-sizing: border-box;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="width: 20px; height: 20px; border-radius: 6px; background: #2F6D64;"></div>
+          <div style="font-family: 'Newsreader', serif; font-size: 19px;">myCancerPal</div>
+        </div>
+        <div onClick="{{ goLog }}" style="font-size: 16px; color: #2F6D64; font-weight: 500; cursor: pointer;">Open the app</div>
+      </div>
+
+      <div style="max-width: 1080px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 56px 32px 40px; display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 64px; align-items: center;">
+        <div style="display: flex; flex-direction: column; gap: 26px; max-width: 540px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: #5A635F;">For people in treatment</div>
+          <h1 style="font-family: 'Newsreader', serif; font-weight: 400; font-size: 52px; line-height: 1.1; margin: 0; letter-spacing: -0.015em; text-wrap: pretty;">You'll remember it. We'll write it down.</h1>
+          <p style="font-size: 19px; line-height: 1.6; color: #3D4643; margin: 0; text-wrap: pretty;">Tell myCancerPal how the day went, in your own words. Between appointments it keeps one page of questions worth asking — each one showing the check-in or pharmacy label it came from.</p>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <button onClick="{{ goLog }}" style="font-family: inherit; font-size: 17px; font-weight: 500; color: #FDFCFA; background: #2F6D64; border: none; border-radius: 12px; padding: 16px 26px; cursor: pointer;" style-hover="background: #255751;">Start today's check-in</button>
+            <button onClick="{{ goAdvocate }}" style="font-family: inherit; font-size: 17px; font-weight: 500; color: #1C2321; background: transparent; border: 1px solid #C9C6BD; border-radius: 12px; padding: 15px 25px; cursor: pointer;" style-hover="border-color: #1C2321;">See an example page</button>
+          </div>
+          <div style="font-size: 15px; line-height: 1.6; color: #5A635F; border-top: 1px solid #DAD8D1; padding-top: 18px;">Nothing is sent to your care team on your behalf. No alerts, no messages. You decide what to bring in.</div>
+        </div>
+
+        <div style="background: #FDFCFA; border: 1px solid #DAD8D1; border-radius: 20px; padding: 28px; display: flex; flex-direction: column; gap: 18px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #8A918D;">Tuesday, Jul 15 · your words</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; line-height: 1.6; color: #3D4643; border-left: 2px solid #DAD8D1; padding-left: 14px;">“skipped Tuesday, short on the copay”</div>
+          <div style="display: flex; align-items: center; gap: 10px; color: #8A918D; font-size: 13px; font-family: 'IBM Plex Mono', monospace;">
+            <div style="height: 1px; background: #E3E1DB; flex: 1;"></div>
+            <span>8 days later</span>
+            <div style="height: 1px; background: #E3E1DB; flex: 1;"></div>
+          </div>
+          <div style="font-family: 'Newsreader', serif; font-size: 22px; line-height: 1.3;">“I've been skipping doses because of the cost.”</div>
+          <div style="font-size: 15px; line-height: 1.6; color: #3D4643;">Waiting on your questions page — so the team hears it as a cost problem, not a side effect.</div>
+          <span style="align-self: flex-start; font-size: 13px; font-weight: 500; padding: 5px 11px; border-radius: 999px; background: #F6EDE7; color: #8C4526; border: 1px solid #E8D5C8;">Bring this up</span>
+        </div>
+      </div>
+
+      <div style="max-width: 1080px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 40px 32px 96px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F; border-bottom: 1px solid #DAD8D1; padding-bottom: 12px; margin-bottom: 32px;">How it works</div>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px;">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A918D;">01 · Log</div>
+            <div style="font-family: 'Newsreader', serif; font-size: 25px; line-height: 1.2;">Say how today went</div>
+            <div style="font-size: 16px; line-height: 1.6; color: #3D4643;">Type it or speak it — a sentence is enough. Your words are stored exactly as you said them and quoted back to you, never rewritten.</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A918D;">02 · Visualize</div>
+            <div style="font-family: 'Newsreader', serif; font-size: 25px; line-height: 1.2;">See what connects to what</div>
+            <div style="font-size: 16px; line-height: 1.6; color: #3D4643;">Check-ins link to medications parsed from your labels. When two things interact, the connection between them is drawn — and you can follow it hop by hop.</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A918D;">03 · Advocate</div>
+            <div style="font-family: 'Newsreader', serif; font-size: 25px; line-height: 1.2;">Walk in with a page</div>
+            <div style="font-size: 16px; line-height: 1.6; color: #3D4643;">Concerns collect into one printable page of questions, each with its date and source. It empties as things get answered.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isApp }}" hint-placeholder-val="{{ false }}">
+    <div style="display: flex; flex-direction: column; min-height: 100vh;">
+      <div style="position: sticky; top: 0; z-index: 20; background: #F7F6F3; border-bottom: 1px solid #DAD8D1;">
+        <div style="max-width: 1080px; margin: 0 auto; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; gap: 24px;">
+          <div onClick="{{ goHome }}" style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 16px 0;">
+            <div style="width: 18px; height: 18px; border-radius: 5px; background: #2F6D64;"></div>
+            <div style="font-family: 'Newsreader', serif; font-size: 17px;">myCancerPal</div>
+          </div>
+          <div style="display: flex; gap: 4px;">
+            <div onClick="{{ goLog }}" style="font-size: 16px; font-weight: 500; padding: 18px 18px 16px; cursor: pointer; border-bottom: 2px solid {{ tabLog }}; color: {{ tabLogC }};">Log</div>
+            <div onClick="{{ goVisualize }}" style="font-size: 16px; font-weight: 500; padding: 18px 18px 16px; cursor: pointer; border-bottom: 2px solid {{ tabViz }}; color: {{ tabVizC }};">Visualize</div>
+            <div onClick="{{ goAdvocate }}" style="font-size: 16px; font-weight: 500; padding: 18px 18px 16px; cursor: pointer; border-bottom: 2px solid {{ tabAdv }}; color: {{ tabAdvC }}; display: flex; align-items: center; gap: 8px;">Advocate <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8C4526; background: #F6EDE7; border: 1px solid #E8D5C8; border-radius: 999px; padding: 2px 7px;">4</span></div>
+          </div>
+          <div onClick="{{ goProfile }}" style="display: flex; align-items: center; gap: 9px; cursor: pointer; padding: 8px 10px; border-radius: 999px; border: 1px solid {{ profileBd }};" style-hover="border-color: #C9C6BD;">
+            <span style="width: 26px; height: 26px; border-radius: 50%; background: #EAF0EE; border: 1px solid #D2E1DC; color: #2A5F57; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center;">{{ initials }}</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A918D;">{{ navName }} · day 41</span>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ isLog }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width: 720px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 48px 32px 96px; display: flex; flex-direction: column; gap: 28px;">
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F;">Wednesday, Jul 23</div>
+            <h2 style="font-family: 'Newsreader', serif; font-weight: 400; font-size: 38px; line-height: 1.15; margin: 0;">How are you doing today, Maya?</h2>
+            <p style="font-size: 17px; line-height: 1.6; color: #5A635F; margin: 0;">A sentence is plenty. How you slept, what you took, anything that felt off.</p>
+          </div>
+
+          <div style="background: #FDFCFA; border: 1px solid #DAD8D1; border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 16px;">
+            <textarea value="{{ draft }}" onChange="{{ onDraft }}" placeholder="Type here, or tap Speak and edit before saving." rows="5" style="font-family: 'IBM Plex Sans', sans-serif; font-size: 18px; line-height: 1.6; color: #1C2321; background: #F7F6F3; border: 1px solid #E3E1DB; border-radius: 12px; padding: 16px; resize: vertical; outline: none;" style-focus="border-color: #2F6D64;"></textarea>
+
+            <sc-if value="{{ recording }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; align-items: center; gap: 14px; background: #EAF0EE; border: 1px solid #D2E1DC; border-radius: 12px; padding: 12px 16px;">
+                <div style="display: flex; align-items: center; gap: 3px; height: 22px;">
+                  <sc-for list="{{ bars }}" as="b" hint-placeholder-count="7">
+                    <div style="width: 3px; height: 22px; border-radius: 2px; background: #2F6D64; animation: pulse 1s ease-in-out infinite; animation-delay: {{ b.d }};"></div>
+                  </sc-for>
+                </div>
+                <div style="font-size: 16px; color: #2A5F57;">Listening — say it however it comes out.</div>
+              </div>
+            </sc-if>
+
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button onClick="{{ toggleRec }}" style="font-family: inherit; font-size: 16px; font-weight: 500; color: #1C2321; background: transparent; border: 1px solid #C9C6BD; border-radius: 10px; padding: 13px 18px; cursor: pointer; display: flex; align-items: center; gap: 9px;" style-hover="border-color: #1C2321;"><span style="width: 9px; height: 9px; border-radius: 50%; background: {{ recDot }};"></span>{{ recLabel }}</button>
+              <div style="flex: 1;"></div>
+              <button onClick="{{ save }}" style="font-family: inherit; font-size: 16px; font-weight: 500; color: #FDFCFA; background: #2F6D64; border: none; border-radius: 10px; padding: 14px 22px; cursor: pointer;" style-hover="background: #255751;">Add to today's check-in</button>
+            </div>
+            <div style="font-size: 14px; line-height: 1.5; color: #8A918D;">Saved exactly as written and quoted back to you. Nothing is sent to anyone.</div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="font-size: 16px; color: #5A635F;">Or tap what fits — you can still add words.</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <sc-for list="{{ tags }}" as="t" hint-placeholder-count="6">
+                <span onClick="{{ t.add }}" style="font-size: 16px; padding: 10px 16px; border-radius: 999px; border: 1px solid #C9C6BD; background: #FDFCFA; color: #3D4643; cursor: pointer;" style-hover="border-color: #2F6D64; color: #2F6D64;">{{ t.label }}</span>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 14px; border-top: 1px solid #DAD8D1; padding-top: 24px;">
+            <div style="display: flex; align-items: baseline; justify-content: space-between;">
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F;">Today so far</div>
+              <div onClick="{{ goVisualize }}" style="font-size: 15px; color: #2F6D64; font-weight: 500; cursor: pointer;">See what this connected to →</div>
+            </div>
+            <sc-for list="{{ entries }}" as="e" hint-placeholder-count="2">
+              <div style="background: #FDFCFA; border: 1px solid #E3E1DB; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 10px; animation: fadeUp 0.28s ease both;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A918D;">{{ e.time }}</div>
+                <div style="font-size: 17px; line-height: 1.6; color: #1C2321;">{{ e.text }}</div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  <sc-for list="{{ e.links }}" as="l" hint-placeholder-count="2">
+                    <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 4px 9px; border-radius: 6px; background: #EFEEE9; color: #5A635F; border: 1px solid #E3E1DB;">{{ l }}</span>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isViz }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width: 1240px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 40px 32px 96px; display: flex; flex-direction: column; gap: 24px;">
+          <div style="display: flex; flex-direction: column; gap: 20px;">
+            <div style="display: flex; flex-direction: column; gap: 8px; max-width: 620px;">
+              <h2 style="font-family: 'Newsreader', serif; font-weight: 400; font-size: 34px; line-height: 1.15; margin: 0;">What's connected to what</h2>
+              <p style="font-size: 17px; line-height: 1.6; color: #5A635F; margin: 0;">Every check-in and every parsed label is a point. Lines are the links found between them — follow one to see how a question got onto your page.</p>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <sc-for list="{{ filters }}" as="f" hint-placeholder-count="4">
+                <span onClick="{{ f.click }}" style="font-size: 14px; font-weight: 500; padding: 9px 14px; border-radius: 999px; cursor: pointer; border: 1px solid {{ f.bd }}; background: {{ f.bg }}; color: {{ f.fg }};">{{ f.label }}</span>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="overflow-x: auto; background: #FDFCFA; border: 1px solid #DAD8D1; border-radius: 18px;">
+            <div style="position: relative; min-width: 1180px; height: 580px;">
+              <svg viewBox="0 0 1360 600" preserveAspectRatio="none" style="position: absolute; inset: 0; width: 100%; height: 100%;">
+                <sc-for list="{{ edges }}" as="e" hint-placeholder-count="8">
+                  <path d="{{ e.d }}" fill="none" stroke="{{ e.stroke }}" strokeWidth="{{ e.w }}" strokeDasharray="{{ e.dash }}" opacity="{{ e.o }}"></path>
+                </sc-for>
+              </svg>
+              <sc-for list="{{ nodes }}" as="n" hint-placeholder-count="10">
+                <div onClick="{{ n.click }}" style="position: absolute; box-sizing: border-box; left: {{ n.left }}; top: {{ n.top }}; width: 15.4%; transform: translate(-50%, -50%); opacity: {{ n.o }}; background: {{ n.bg }}; border: 1px solid {{ n.bd }}; border-left: 3px solid {{ n.rule }}; border-radius: 10px; padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 6px;">
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #8A918D;">{{ n.kind }}</div>
+                  <div style="font-size: 14px; line-height: 1.4; color: #1C2321;">{{ n.label }}</div>
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A918D;">{{ n.meta }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display: flex; gap: 22px; align-items: center; flex-wrap: wrap; border-top: 1px solid #E3E1DB; padding: 14px 22px;">
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #3D4643;"><span style="width: 22px; height: 2px; background: #B0653F;"></span>on your page</div>
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #3D4643;"><span style="width: 22px; height: 2px; background: #2F6D64;"></span>answered or asked</div>
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #3D4643;"><span style="width: 22px; height: 0; border-top: 2px dashed #A29E94;"></span>tracking, not surfaced yet</div>
+              <div style="flex: 1;"></div>
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A918D;">emergency criteria evaluated first on every open — none met</div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 24px; align-items: start;">
+            <div style="background: #FDFCFA; border: 1px solid #DAD8D1; border-radius: 18px; padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #8A918D;">{{ detailKicker }}</div>
+              <div style="font-family: 'Newsreader', serif; font-size: 25px; line-height: 1.25;">{{ detailTitle }}</div>
+              <div style="font-size: 16px; line-height: 1.6; color: #3D4643;">{{ detailBody }}</div>
+              <div style="display: flex; flex-direction: column; gap: 0;">
+                <sc-for list="{{ detailHops }}" as="h" hint-placeholder-count="3">
+                  <div style="display: flex; gap: 14px; align-items: flex-start; padding: 12px 0; border-top: 1px solid #E3E1DB;">
+                    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A918D; width: 44px; flex: none; padding-top: 2px;">{{ h.n }}</div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <div style="font-size: 15px; line-height: 1.5; color: #1C2321;">{{ h.text }}</div>
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A918D;">{{ h.src }}</div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #E3E1DB; padding-top: 14px;">
+                <span style="font-size: 13px; font-weight: 500; padding: 5px 11px; border-radius: 999px; background: {{ detailPillBg }}; color: {{ detailPillFg }}; border: 1px solid {{ detailPillBd }};">{{ detailPill }}</span>
+                <span onClick="{{ goAdvocate }}" style="font-size: 15px; color: #2F6D64; font-weight: 500; cursor: pointer;">Open on Advocate →</span>
+              </div>
+            </div>
+
+            <div style="background: #FDFCFA; border: 1px dashed #C9C6BD; border-radius: 18px; padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F;">Tracking, not on your page yet</div>
+                <div style="font-size: 15px; line-height: 1.55; color: #5A635F;">Watched patterns that haven't met the bar to become a question. Add one yourself if it matters to you.</div>
+              </div>
+              <sc-for list="{{ watching }}" as="w" hint-placeholder-count="3">
+                <div style="display: flex; flex-direction: column; gap: 10px; border-top: 1px solid #E3E1DB; padding-top: 14px;">
+                  <div style="font-size: 16px; line-height: 1.5; color: #1C2321;">{{ w.title }}</div>
+                  <div style="font-size: 14px; line-height: 1.55; color: #5A635F;">{{ w.why }}</div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="flex: 1; height: 5px; border-radius: 3px; background: #EFEEE9; overflow: hidden;"><div style="height: 100%; border-radius: 3px; background: #A9C4BD; width: {{ w.pct }};"></div></div>
+                    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8A918D; white-space: nowrap;">{{ w.count }}</div>
+                  </div>
+                  <span onClick="{{ w.promote }}" style="align-self: flex-start; font-size: 14px; color: #2F6D64; font-weight: 500; cursor: pointer;">Add to my questions</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isProfile }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width: 760px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 48px 32px 96px; display: flex; flex-direction: column; gap: 32px;">
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <h2 style="font-family: 'Newsreader', serif; font-weight: 400; font-size: 38px; line-height: 1.15; margin: 0;">Your profile</h2>
+            <p style="font-size: 17px; line-height: 1.6; color: #5A635F; margin: 0; max-width: 58ch;">Used to make your questions page accurate and to print a header your care team recognises. Stored on this device — nothing is shared unless you print or hand it over.</p>
+          </div>
+
+          <sc-for list="{{ sections }}" as="sec" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; gap: 18px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F;">{{ sec.title }}</div>
+                <div style="flex: 1; height: 1px; background: #DAD8D1;"></div>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 20px;">
+                <sc-for list="{{ sec.fields }}" as="f" hint-placeholder-count="4">
+                  <label style="display: flex; flex-direction: column; gap: 7px; grid-column: {{ f.span }};">
+                    <span style="font-size: 15px; font-weight: 500; color: #1C2321;">{{ f.label }}</span>
+                    <input value="{{ f.value }}" onChange="{{ f.onChange }}" placeholder="{{ f.placeholder }}" style="font-family: 'IBM Plex Sans', sans-serif; font-size: 17px; color: #1C2321; background: #FDFCFA; border: 1px solid #DAD8D1; border-radius: 10px; padding: 13px 14px; outline: none; width: 100%; box-sizing: border-box;" style-focus="border-color: #2F6D64;" />
+                    <span style="font-size: 13px; line-height: 1.45; color: #8A918D;">{{ f.hint }}</span>
+                  </label>
+                </sc-for>
+              </div>
+              <sc-if value="{{ sec.chipsLabel }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; flex-direction: column; gap: 9px;">
+                  <span style="font-size: 15px; font-weight: 500; color: #1C2321;">{{ sec.chipsLabel }}</span>
+                  <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <sc-for list="{{ sec.chips }}" as="c" hint-placeholder-count="4">
+                      <span onClick="{{ c.click }}" style="font-size: 16px; padding: 10px 16px; border-radius: 999px; cursor: pointer; border: 1px solid {{ c.bd }}; background: {{ c.bg }}; color: {{ c.fg }};">{{ c.label }}</span>
+                    </sc-for>
+                  </div>
+                  <span style="font-size: 13px; line-height: 1.45; color: #8A918D;">{{ sec.chipsHint }}</span>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+
+          <div style="display: flex; flex-direction: column; gap: 18px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F;">Current medications</div>
+              <div style="flex: 1; height: 1px; background: #DAD8D1;"></div>
+            </div>
+            <div style="background: #FDFCFA; border: 1px solid #DAD8D1; border-radius: 16px; overflow: hidden;">
+              <sc-for list="{{ meds }}" as="m" hint-placeholder-count="3">
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid #E3E1DB;">
+                  <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <div style="font-size: 17px; color: #1C2321;">{{ m.name }}</div>
+                    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A918D;">{{ m.meta }}</div>
+                  </div>
+                  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A918D; white-space: nowrap;">{{ m.source }}</div>
+                </div>
+              </sc-for>
+              <div style="padding: 14px 20px; font-size: 15px; color: #2F6D64; font-weight: 500; cursor: pointer;">Add a medication by photographing the label</div>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 18px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F;">Allergies and other conditions</div>
+              <div style="flex: 1; height: 1px; background: #DAD8D1;"></div>
+            </div>
+            <textarea value="{{ notes }}" onChange="{{ onNotes }}" rows="3" placeholder="Penicillin allergy, type 2 diabetes, anything a new clinician should know." style="font-family: 'IBM Plex Sans', sans-serif; font-size: 17px; line-height: 1.6; color: #1C2321; background: #FDFCFA; border: 1px solid #DAD8D1; border-radius: 12px; padding: 15px; resize: vertical; outline: none;" style-focus="border-color: #2F6D64;"></textarea>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 16px; border-top: 1px solid #DAD8D1; padding-top: 22px;">
+            <button onClick="{{ saveProfile }}" style="font-family: inherit; font-size: 16px; font-weight: 500; color: #FDFCFA; background: #2F6D64; border: none; border-radius: 10px; padding: 14px 22px; cursor: pointer;" style-hover="background: #255751;">Save profile</button>
+            <span style="font-size: 15px; color: #8A918D;">{{ savedNote }}</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isAdv }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width: 720px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 48px 32px 96px; display: flex; flex-direction: column; gap: 28px;">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <h2 style="font-family: 'Newsreader', serif; font-weight: 400; font-size: 38px; line-height: 1.15; margin: 0;">Questions for your care team</h2>
+            <p style="font-size: 17px; line-height: 1.6; color: #5A635F; margin: 0;">Built from your check-ins since Jun 12. Bring it to your Jul 29 appointment — it empties as things get answered. Nothing here is sent to anyone.</p>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px;">
+              <button style="font-family: inherit; font-size: 16px; font-weight: 500; color: #FDFCFA; background: #2F6D64; border: none; border-radius: 10px; padding: 13px 20px; cursor: pointer;" style-hover="background: #255751;">Print for my visit</button>
+              <button onClick="{{ goVisualize }}" style="font-family: inherit; font-size: 16px; color: #3D4643; background: transparent; border: 1px solid #C9C6BD; border-radius: 10px; padding: 12px 19px; cursor: pointer;" style-hover="border-color: #1C2321;">Show how these were found</button>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #8C4526;">Ask about these</div>
+              <div style="flex: 1; height: 1px; background: #E8D5C8;"></div>
+            </div>
+            <sc-for list="{{ urgent }}" as="q" hint-placeholder-count="1">
+              <div style="background: #FDFCFA; border: 1px solid #E8D5C8; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+                <div style="font-family: 'Newsreader', serif; font-size: 25px; line-height: 1.25;">{{ q.title }}</div>
+                <div style="font-size: 17px; line-height: 1.6; color: #3D4643;">{{ q.body }}</div>
+                <div style="display: flex; flex-direction: column; gap: 10px; border-left: 2px solid #E8D5C8; padding-left: 16px;">
+                  <sc-for list="{{ q.sources }}" as="s" hint-placeholder-count="2">
+                    <div style="display: flex; flex-direction: column; gap: 3px;">
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; line-height: 1.5; color: #3D4643;">{{ s.quote }}</div>
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A918D;">{{ s.meta }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 2px;">
+                  <span style="font-size: 13px; font-weight: 500; padding: 5px 11px; border-radius: 999px; background: #F6EDE7; color: #8C4526; border: 1px solid #E8D5C8;">Bring this up</span>
+                  <span onClick="{{ q.log }}" style="font-size: 15px; color: #2F6D64; font-weight: 500; cursor: pointer;">Log the answer</span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F;">Worth mentioning</div>
+              <div style="flex: 1; height: 1px; background: #DAD8D1;"></div>
+            </div>
+            <sc-for list="{{ worth }}" as="q" hint-placeholder-count="3">
+              <div style="background: #FDFCFA; border: 1px solid #E3E1DB; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+                <div style="font-family: 'Newsreader', serif; font-size: 23px; line-height: 1.25;">{{ q.title }}</div>
+                <div style="font-size: 17px; line-height: 1.6; color: #3D4643;">{{ q.body }}</div>
+                <div style="display: flex; flex-direction: column; gap: 10px; border-left: 2px solid #DAD8D1; padding-left: 16px;">
+                  <sc-for list="{{ q.sources }}" as="s" hint-placeholder-count="2">
+                    <div style="display: flex; flex-direction: column; gap: 3px;">
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; line-height: 1.5; color: #3D4643;">{{ s.quote }}</div>
+                      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A918D;">{{ s.meta }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 2px;">
+                  <span style="font-size: 13px; font-weight: 500; padding: 5px 11px; border-radius: 999px; background: {{ q.pillBg }}; color: {{ q.pillFg }}; border: 1px solid {{ q.pillBd }};">{{ q.pill }}</span>
+                  <span onClick="{{ q.log }}" style="font-size: 15px; color: #2F6D64; font-weight: 500; cursor: pointer;">Log the answer</span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 12px; border: 1px dashed #C9C6BD; border-radius: 16px; padding: 22px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #5A635F;">Also tracking — not questions yet</div>
+            <sc-for list="{{ watching }}" as="w" hint-placeholder-count="3">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 16px; border-top: 1px solid #E3E1DB; padding-top: 12px;">
+                <div style="font-size: 16px; line-height: 1.5; color: #3D4643;">{{ w.title }}</div>
+                <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8A918D; white-space: nowrap;">{{ w.count }}</div>
+              </div>
+            </sc-for>
+            <div onClick="{{ goVisualize }}" style="font-size: 15px; color: #2F6D64; font-weight: 500; cursor: pointer; padding-top: 4px;">See these on the graph →</div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:900}}">
+const CLAY = "#B0653F", PINE = "#2F6D64", GREY = "#A29E94";
+
+const NODES = [
+  { id: "w1", kind: "your words · Jul 20", label: "“urgent care gave me something for a sinus thing”", meta: "check-in", x: 150, y: 100, thread: "interaction" },
+  { id: "w2", kind: "your words · Jul 11–23", label: "“my hands are tingling again”", meta: "6 mentions", x: 150, y: 300, thread: "tingling" },
+  { id: "w3", kind: "your words · Jul 15", label: "“skipped Tuesday, short on the copay”", meta: "check-in", x: 150, y: 500, thread: "cost" },
+  { id: "a1", kind: "parsed label", label: "levofloxacin 500 mg", meta: "urgent care · Jul 20", x: 520, y: 80, thread: "interaction" },
+  { id: "a2", kind: "parsed label", label: "ondansetron 8 mg", meta: "oncology · Jul 3", x: 520, y: 220, thread: "interaction" },
+  { id: "a3", kind: "parsed label", label: "imatinib 400 mg, daily", meta: "active · 4 doses not logged", x: 520, y: 420, thread: "cost" },
+  { id: "g1", kind: "link found", label: "Both prolong QT interval", meta: "2 prescribers, no overlap check", x: 880, y: 150, thread: "interaction" },
+  { id: "g2", kind: "link found", label: "Symptom not listed for any active drug", meta: "unexplained · 6 days", x: 880, y: 320, thread: "tingling" },
+  { id: "g3", kind: "link found", label: "Missed doses follow a cost mention", meta: "affordability, not tolerance", x: 880, y: 500, thread: "cost" },
+  { id: "o1", kind: "on your page", label: "Is it okay to take these together?", meta: "Bring this up", x: 1210, y: 150, thread: "interaction" },
+  { id: "o2", kind: "watching", label: "Needs 1 more week before surfacing", meta: "or add it yourself", x: 1210, y: 320, thread: "tingling" },
+  { id: "o3", kind: "on your page", label: "I've been skipping doses because of cost", meta: "Bring this up", x: 1210, y: 500, thread: "cost" }
+];
+
+const EDGES = [
+  ["w1", "a1", "interaction"], ["a1", "g1", "interaction"], ["a2", "g1", "interaction"], ["g1", "o1", "interaction"],
+  ["w2", "a3", "tingling"], ["w2", "g2", "tingling"], ["g2", "o2", "tingling"],
+  ["w3", "a3", "cost"], ["a3", "g3", "cost"], ["g3", "o3", "cost"]
+];
+
+const DETAILS = {
+  interaction: {
+    kicker: "3 hops · Jul 20 → today",
+    title: "Two prescribers, one heart rhythm",
+    body: "Nothing here is a diagnosis. It is a gap: two clinicians prescribed drugs with the same cardiac effect and neither chart mentions the other.",
+    pill: "On your page · Bring this up", pillBg: "#F6EDE7", pillFg: "#8C4526", pillBd: "#E8D5C8",
+    hops: [
+      { n: "hop 1", text: "Your check-in named a new medication from urgent care.", src: "“urgent care gave me something for a sinus thing” · Jul 20" },
+      { n: "hop 2", text: "The pharmacy label resolved it to levofloxacin 500 mg.", src: "parsed label · Jul 20" },
+      { n: "hop 3", text: "Levofloxacin and your ondansetron share a QT-prolongation effect.", src: "ondansetron 8 mg · oncology · Jul 3" }
+    ]
+  },
+  tingling: {
+    kicker: "2 hops · tracking since Jul 11",
+    title: "A symptom nothing on your list explains",
+    body: "Six mentions across twelve days, and no active medication names it as an expected effect. It stays here until it reaches the bar — or until you decide it matters now.",
+    pill: "Tracking · not on your page", pillBg: "#EFEEE9", pillFg: "#5A635F", pillBd: "#DAD8D1",
+    hops: [
+      { n: "hop 1", text: "Tingling described in your own words on 6 separate days.", src: "check-ins · Jul 11, 13, 14, 17, 19, 22" },
+      { n: "hop 2", text: "Checked against every active drug — not a listed effect of any.", src: "3 parsed labels" }
+    ]
+  },
+  cost: {
+    kicker: "3 hops · Jul 15 → today",
+    title: "Missed doses that aren't about side effects",
+    body: "Framing matters: if the team reads this as intolerance they change the drug. Read as cost, they can bring in assistance instead.",
+    pill: "On your page · Bring this up", pillBg: "#F6EDE7", pillFg: "#8C4526", pillBd: "#E8D5C8",
+    hops: [
+      { n: "hop 1", text: "You mentioned the copay directly.", src: "“skipped Tuesday, short on the copay” · Jul 15" },
+      { n: "hop 2", text: "Imatinib went unlogged on 4 days afterwards.", src: "parsed label · daily schedule" },
+      { n: "hop 3", text: "The gaps cluster after the cost mention, not after side-effect days.", src: "check-ins · Jul 15–23" }
+    ]
+  }
+};
+
+class Component extends DCLogic {
+  state = {
+    view: "landing",
+    draft: "",
+    recording: false,
+    focus: "interaction",
+    entries: [
+      { time: "8:10 am", text: "Took the imatinib after breakfast like the label says.", links: ["imatinib", "timing"] },
+      { time: "2:45 pm", text: "Hands tingling again, worse than yesterday.", links: ["tingling", "6th mention"] }
+    ],
+    promoted: [],
+    saved: false,
+    profile: {
+      first: "Maya", last: "Rodriguez", pronouns: "she / her",
+      dob: "1979-03-14", age: "47", sex: "Female",
+      diagnosis: "Chronic myeloid leukemia (CML)", stage: "Chronic phase",
+      diagnosedOn: "Jun 12, 2026", center: "Ridgeline Cancer Center",
+      oncologist: "Dr. A. Reyes", nurseLine: "(415) 555-0142",
+      contactName: "Luis Rodriguez (husband)", contactPhone: "(415) 555-0188",
+      notes: "Penicillin allergy. Type 2 diabetes, metformin twice daily."
+    }
+  };
+
+  setField = (key) => (e) => {
+    const v = e.target.value;
+    this.setState((st) => ({ saved: false, profile: Object.assign({}, st.profile, { [key]: v }) }));
+  };
+
+  setPick = (key, v) => () =>
+    this.setState((st) => ({ saved: false, profile: Object.assign({}, st.profile, { [key]: v }) }));
+
+  go = (view) => () => this.setState({ view });
+
+  renderVals() {
+    const s = this.state;
+    const focus = s.focus;
+    const on = (thread) => (focus === thread ? 1 : 0.22);
+    const strokeFor = (t) => (t === "tingling" ? GREY : t === "interaction" ? CLAY : PINE);
+
+    const byId = {};
+    NODES.forEach((n) => (byId[n.id] = n));
+
+    const edges = EDGES.map(([a, b, t]) => {
+      const A = byId[a], B = byId[b];
+      const x1 = A.x + 105, y1 = A.y, x2 = B.x - 105, y2 = B.y;
+      const mx = (x1 + x2) / 2;
+      return {
+        d: `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`,
+        stroke: strokeFor(t),
+        w: focus === t ? 2.4 : 1.4,
+        dash: t === "tingling" ? "7 6" : "0",
+        o: on(t)
+      };
+    });
+
+    const nodes = NODES.map((n) => {
+      const active = focus === n.thread;
+      const isWord = n.kind.indexOf("your words") === 0;
+      const isOut = n.kind === "on your page" || n.kind === "watching";
+      return {
+        ...n,
+        left: (n.x / 1360) * 100 + "%",
+        top: (n.y / 600) * 100 + "%",
+        o: active ? 1 : 0.35,
+        bg: isOut && n.thread !== "tingling" ? "#FDF8F5" : "#FDFCFA",
+        bd: active ? "#C9C6BD" : "#E3E1DB",
+        rule: isWord ? "#C9C6BD" : n.thread === "tingling" ? GREY : n.thread === "interaction" ? CLAY : PINE,
+        click: () => this.setState({ focus: n.thread })
+      };
+    });
+
+    const threads = [
+      { id: "interaction", label: "Medication interaction" },
+      { id: "tingling", label: "Tingling — tracking only" },
+      { id: "cost", label: "Cost and missed doses" }
+    ];
+    const filters = threads.map((t) => ({
+      label: t.label,
+      click: () => this.setState({ focus: t.id }),
+      bg: focus === t.id ? "#1C2321" : "transparent",
+      fg: focus === t.id ? "#FDFCFA" : "#3D4643",
+      bd: focus === t.id ? "#1C2321" : "#C9C6BD"
+    }));
+
+    const d = DETAILS[focus];
+
+    const watching = [
+      { title: "Tingling in both hands", why: "6 mentions since Jul 11, not listed for any active drug. Surfaces at 8 mentions or if it spreads.", pct: "75%", count: "6 / 8", promote: () => this.setState({ view: "advocate" }) },
+      { title: "Mouth sores after infusion days", why: "3 mentions, all within 48 hours of infusion — expected, so it only surfaces if severity rises.", pct: "38%", count: "3 / 8", promote: () => this.setState({ view: "advocate" }) },
+      { title: "Grapefruit juice at breakfast", why: "Mentioned twice. Affects the same pathway as imatinib, but not yet often enough to be a pattern.", pct: "25%", count: "2 / 8", promote: () => this.setState({ view: "advocate" }) }
+    ];
+
+    const tagText = {
+      "Nausea": "Felt nauseous today.",
+      "Tingling": "Hands tingling again.",
+      "Tired": "Very tired, slept most of the afternoon.",
+      "Sore mouth": "Mouth is sore.",
+      "Slept badly": "Didn't sleep well.",
+      "Skipped a dose": "Skipped a dose today."
+    };
+    const tags = Object.keys(tagText).map((label) => ({
+      label,
+      add: () => this.setState((st) => ({ draft: (st.draft ? st.draft.trim() + " " : "") + tagText[label] }))
+    }));
+
+    const view = s.view;
+    const tab = (v) => (view === v ? "#1C2321" : "transparent");
+    const tabC = (v) => (view === v ? "#1C2321" : "#5A635F");
+
+    const p = s.profile;
+    const F = (key, label, hint, placeholder, span) => ({
+      label, hint, placeholder: placeholder || "", value: p[key],
+      onChange: this.setField(key), span: span || "auto"
+    });
+    const chip = (key, label) => ({
+      label,
+      click: this.setPick(key, label),
+      bg: p[key] === label ? "#1C2321" : "#FDFCFA",
+      fg: p[key] === label ? "#FDFCFA" : "#3D4643",
+      bd: p[key] === label ? "#1C2321" : "#C9C6BD"
+    });
+
+    const sections = [
+      {
+        title: "About you",
+        fields: [
+          F("first", "First name", ""),
+          F("last", "Last name", ""),
+          F("dob", "Date of birth", "Used to date the printed page."),
+          F("age", "Age", ""),
+          F("pronouns", "Pronouns", "Appears on anything you print.", "she / her", "span 2")
+        ],
+        chipsLabel: "Sex recorded on your chart",
+        chipsHint: "Some dosing and risk guidance differs. Tell us if your chart and your identity don't match — both can be printed.",
+        chips: ["Female", "Male", "Intersex", "Prefer not to say"].map((l) => chip("sex", l))
+      },
+      {
+        title: "Diagnosis",
+        fields: [
+          F("diagnosis", "Diagnosis", "Write it as your team says it — we quote it back, we don't interpret it.", "", "span 2"),
+          F("diagnosedOn", "Diagnosed on", "Day 1 of your timeline."),
+          F("center", "Treatment center", "")
+        ],
+        chipsLabel: "Stage or phase",
+        chipsHint: "Optional. Leave it blank if your team hasn't given you one.",
+        chips: ["Chronic phase", "Accelerated", "Blast crisis", "In remission", "Not sure"].map((l) => chip("stage", l))
+      },
+      {
+        title: "Care team and contacts",
+        fields: [
+          F("oncologist", "Oncologist", ""),
+          F("nurseLine", "Nurse line", "Shown on the emergency card, never dialled for you."),
+          F("contactName", "Emergency contact", ""),
+          F("contactPhone", "Their phone", "")
+        ]
+      }
+    ];
+
+    const first = (p.first || "").trim(), last = (p.last || "").trim();
+
+    return {
+      goProfile: this.go("profile"),
+      isProfile: view === "profile",
+      profileBd: view === "profile" ? "#C9C6BD" : "transparent",
+      initials: ((first[0] || "") + (last[0] || "")).toUpperCase() || "—",
+      navName: first ? first + " " + (last ? last[0] + "." : "") : "Your profile",
+      sections,
+      notes: p.notes,
+      onNotes: this.setField("notes"),
+      saveProfile: () => this.setState({ saved: true }),
+      savedNote: s.saved ? "Saved on this device just now." : "Changes stay on this device.",
+      meds: [
+        { name: "Imatinib 400 mg", meta: "once daily, within 30 min after food", source: "label · Jul 1" },
+        { name: "Ondansetron 8 mg", meta: "as needed for nausea", source: "label · Jul 3" },
+        { name: "Levofloxacin 500 mg", meta: "7-day course, started Jul 20", source: "label · Jul 20" },
+        { name: "Metformin 500 mg", meta: "twice daily — added by you", source: "you · Jun 12" }
+      ],
+      isLanding: view === "landing",
+      isApp: view !== "landing",
+      isLog: view === "log", isViz: view === "visualize", isAdv: view === "advocate",
+      goHome: this.go("landing"), goLog: this.go("log"), goVisualize: this.go("visualize"), goAdvocate: this.go("advocate"),
+      tabLog: tab("log"), tabViz: tab("visualize"), tabAdv: tab("advocate"),
+      tabLogC: tabC("log"), tabVizC: tabC("visualize"), tabAdvC: tabC("advocate"),
+
+      draft: s.draft,
+      onDraft: (e) => this.setState({ draft: e.target.value }),
+      recording: s.recording,
+      recLabel: s.recording ? "Stop and review" : "Speak instead",
+      recDot: s.recording ? "#B0653F" : "#2F6D64",
+      bars: [0, 1, 2, 3, 4, 5, 6].map((i) => ({ d: i * 0.11 + "s" })),
+      toggleRec: () => {
+        if (this.state.recording) {
+          this.setState((st) => ({
+            recording: false,
+            draft: (st.draft ? st.draft.trim() + " " : "") + "Tired all morning but ate a proper lunch. The tingling came back around three."
+          }));
+        } else this.setState({ recording: true });
+      },
+      save: () => {
+        const t = this.state.draft.trim();
+        if (!t) return;
+        this.setState((st) => ({
+          draft: "",
+          entries: st.entries.concat([{ time: "just now", text: t, links: ["saved in your words"] }])
+        }));
+      },
+      entries: s.entries,
+      tags,
+
+      nodes, edges, filters, watching,
+      detailKicker: d.kicker, detailTitle: d.title, detailBody: d.body, detailHops: d.hops,
+      detailPill: d.pill, detailPillBg: d.pillBg, detailPillFg: d.pillFg, detailPillBd: d.pillBd,
+
+      urgent: [{
+        title: "Is it okay that I'm taking ondansetron and levofloxacin at the same time?",
+        body: "Both can affect heart rhythm. Your oncology team prescribed one on Jul 3 and urgent care prescribed the other on Jul 20 — neither prescription mentions the other.",
+        sources: [
+          { quote: "ondansetron 8 mg, as needed for nausea", meta: "pharmacy label · Jul 3" },
+          { quote: "“urgent care gave me something for a sinus thing”", meta: "your check-in · Jul 20" }
+        ],
+        log: () => this.setState({ view: "log" })
+      }],
+      worth: [
+        {
+          title: "I've been skipping doses because of the cost.",
+          body: "You mentioned the copay on Jul 15 and imatinib went unlogged on 4 days since. Said plainly, this reads as a cost problem — there may be assistance for it. Read as a side effect, they may change the drug instead.",
+          sources: [{ quote: "“skipped Tuesday, short on the copay”", meta: "your check-in · Jul 15" }],
+          pill: "Bring this up", pillBg: "#F6EDE7", pillFg: "#8C4526", pillBd: "#E8D5C8",
+          log: () => this.setState({ view: "log" })
+        },
+        {
+          title: "Am I taking the imatinib the right way?",
+          body: "Your label says within 30 minutes after food. On 5 days you described taking it on an empty stomach.",
+          sources: [
+            { quote: "take within 30 minutes after food", meta: "pharmacy label · Jul 1" },
+            { quote: "“took it before breakfast again, empty stomach”", meta: "your check-in · Jul 18" }
+          ],
+          pill: "Bring this up", pillBg: "#F6EDE7", pillFg: "#8C4526", pillBd: "#E8D5C8",
+          log: () => this.setState({ view: "log" })
+        },
+        {
+          title: "What's causing the tingling in my hands?",
+          body: "Six mentions since Jul 11. Nothing on your medication list names it as a known effect — which is why it's worth asking rather than assuming it's expected.",
+          sources: [{ quote: "“my hands are tingling again”", meta: "your check-in · Jul 22" }],
+          pill: "Asked · Jul 22", pillBg: "#EAF0F5", pillFg: "#35536F", pillBd: "#D3E0EA",
+          log: () => this.setState({ view: "log" })
+        }
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>

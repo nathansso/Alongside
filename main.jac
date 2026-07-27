@@ -369,9 +369,9 @@ walker:pub Prepare {   # :pub — client-spawned (page.cl.jac `root spawn Prepar
 
 cl {
     import "./styles/global.css";
-    import from .page { ConcernsPage }
+    import from .page { AlongsideApp }
 
     def:pub app -> JsxElement {
-        return <ConcernsPage />;
+        return <AlongsideApp />;
     }
 }
