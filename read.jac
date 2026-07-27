@@ -31,7 +31,7 @@
 import from graph {
     Anchor, Belief, CaseFile, Concern, Constraint, Observation, Preference, TimelineEntry,
     Utterance, Verdict, Violation,
-    About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
+    About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes, Relates, Shortcut
 }
 import from datetime { date }
 
@@ -331,6 +331,130 @@ def rd_partner_candidates(c: Constraint, x: Anchor) -> list[Anchor] {
 
 
 # ==========================================================================================
+# Channel A helpers (#15) — beam, budget, lazy decay, reinforcement over About/Relates/Shortcut.
+# ==========================================================================================
+#
+# SCHEMA CORRECTION TO #15's TEXT: the issue's traversal description puts Shortcut at the Belief
+# step ("at Belief: ... score [edge here ->:Relates:->] plus ->:Shortcut:->"). graph.jac pins
+# `edge Shortcut: Anchor --> Belief`, so a Belief can never have an OUTGOING Shortcut edge — the
+# type doesn't allow it, and `[here ->:Shortcut:->]` from a Belief is unconditionally empty.
+# Shortcut is scored at the ANCHOR step instead, alongside About, which is where the schema
+# actually permits it (Anchor is the left endpoint) and matches Consolidate's own framing of a
+# Shortcut as a collapsed Anchor->Belief path (ARCHITECTURE §4, "Shortcut promotion", #57).
+#
+# SPEC CONFLICT, RESOLVED AGAINST THE ACCEPTANCE LINE: #15's Belief-step text also says "budget
+# -= 1; exhausted then disengage". Read literally, `disengage` is the Jac keyword that halts the
+# WHOLE walker — but channel A and channel B share one visit queue (`rd_anchor` queues
+# `governed`/`excluded`/Member-expansion Anchors; this file's new Belief-entry ability queues
+# further Beliefs), so a literal `disengage` on budget exhaustion would abort any channel-B
+# Constraint/Anchor visits still queued behind it. That is impossible under #15's own acceptance
+# line 5, "channel B results are byte-identical with channel A enabled and disabled" — a
+# literal-disengage build could not pass that test on any topology where the queue interleaves.
+# Implemented as an early `return`, scoped to the one ability, which stops this branch's further
+# collection/expansion without touching the walker's lifecycle or the shared queue.
+#
+# UNPINNED CONSTANTS: half-life, beam, budget, and the reinforcement step are not given numbers
+# anywhere in ARCHITECTURE.md or CONTRACTS.md. Picked here and documented, same treatment as
+# write.jac's Consolidate `at`-field gap — not resolved as if it were an open question, just
+# recorded as a choice.
+glob RD_HALF_LIFE_DAYS: float = 14.0;
+glob RD_BEAM: int = 3;
+glob RD_BUDGET_DEFAULT: int = 10;
+glob RD_REINFORCE_STEP: float = 0.25;
+glob RD_WATERLINE: float = 0.1;   # A6/#15 occlusion: effective score below this is excluded from
+                                   # the beam pool, not deleted — the belief and its DerivedFrom
+                                   # edge are untouched, only absent from THIS read.
+
+# "Now" for lazy decay: the graph's own most-recent Utterance.at, same deterministic-clock
+# discipline as write.jac's wr_latest_utterance_at — reimplemented locally, not imported.
+# read.jac does not import from write.jac (CONTRACTS §1a discipline 4).
+def rd_now(at_root: Root) -> str {
+    utts: list[Utterance] = [at_root -->][?:Utterance];
+    latest: str = "";
+    for u in utts {
+        if u.at > latest {
+            latest = u.at;
+        }
+    }
+    return latest;
+}
+
+# ISO "YYYY-MM-DD" day difference (both dates are always this shape in this graph). A lexical
+# 365/30/1-day-per-unit approximation, not a calendar-exact diff — adequate for a decay half-life
+# measured in weeks, and it avoids importing `datetime` into a walker file for one subtraction.
+def rd_days_between(earlier: str, later: str) -> int {
+    if earlier == "" or later == "" {
+        return 0;
+    }
+    ey: int = int(earlier[0:4]);
+    em: int = int(earlier[5:7]);
+    ed: int = int(earlier[8:10]);
+    ly: int = int(later[0:4]);
+    lm: int = int(later[5:7]);
+    ld: int = int(later[8:10]);
+    e_days: int = (ey * 365) + (em * 30) + ed;
+    l_days: int = (ly * 365) + (lm * 30) + ld;
+    diff: int = l_days - e_days;
+    return diff if diff > 0 else 0;
+}
+
+# Lazy decay, computed at read time — no sweep, no scheduler (#15's own contract line).
+# `strength * 0.5 ** (days_since(last_used) / half_life)`. A belief never reinforced
+# (`last_used == ""`) has no staleness to measure — treated as fresh, not maximally decayed.
+def rd_effective(strength: float, last_used: str, now: str) -> float {
+    if last_used == "" {
+        return strength;
+    }
+    days: int = rd_days_between(last_used, now);
+    half_lives: float = float(days) / RD_HALF_LIFE_DAYS;
+    return strength * (0.5 ** half_lives);
+}
+
+# Top-`beam` of `candidates` by `scores` descending. Beam is single digits, so a manual
+# selection pass over a plain list reads clearer than sorting tuples of mixed node/float type.
+def rd_top_beam(candidates: list[Belief], scores: dict[str, float], beam: int) -> list[Belief] {
+    pool: list[Belief] = [];
+    for c in candidates {
+        pool.append(c);
+    }
+    chosen: list[Belief] = [];
+    n: int = beam if beam < len(pool) else len(pool);
+    for i in range(n) {
+        best_idx: int = -1;
+        best_score: float = -1.0;
+        for idx in range(len(pool)) {
+            cid: str = jid(pool[idx]);
+            sc: float = float(scores.get(cid, 0.0));
+            if sc > best_score {
+                best_score = sc;
+                best_idx = idx;
+            }
+        }
+        chosen.append(pool[best_idx]);
+        pool.pop(best_idx);
+    }
+    return chosen;
+}
+
+# Reinforcement (A9: only Recall reinforces). Bumps the collected belief's own fields, and — for
+# a Relates edge actually walked — its weight/co_uses/last_used. `About`/`Shortcut` intentionally
+# untouched: neither carries a `last_used` field in the frozen schema (graph.jac), so there is
+# nothing for the decay formula to read on either edge type, and bumping a value nothing ever
+# decays buys no measurable behavior. `Relates` carries the full field set the formula reads.
+def rd_reinforce_belief(b: Belief, now: str) {
+    b.uses = b.uses + 1;
+    b.last_used = now;
+    b.strength = b.strength + RD_REINFORCE_STEP;
+}
+
+def rd_reinforce_relates(e: Relates, now: str) {
+    e.weight = e.weight + RD_REINFORCE_STEP;
+    e.co_uses = e.co_uses + 1;
+    e.last_used = now;
+}
+
+
+# ==========================================================================================
 # `Recall` — channel B, the exhaustive constraint traversal (#8)
 # ==========================================================================================
 #
@@ -373,6 +497,23 @@ walker:pub Recall {
     # `interaction`). Unordered on purpose: the triangle is reachable from either arm and the
     # curated pair from either side, and both must yield the same single concern.
     has rd_seen_pairs: list[str] = [];
+
+    # --- channel A (#15) — extra fields, all defaulted. CONTRACTS §4 pins `anchors`/`out`; an
+    # extra defaulted `has` field does not change an existing caller's spawn (`root spawn
+    # Recall(anchors=a)` still works unchanged), same discipline as Consolidate's `budget`. -----
+    has budget: int = RD_BUDGET_DEFAULT;
+    has beam: int = RD_BEAM;
+    # Testability toggle for #15's own acceptance line 5 ("channel B byte-identical with channel
+    # A enabled and disabled") — without a real switch that line is a code-review claim, not a
+    # test. Every channel-A ability below checks this first.
+    has rd_channel_a_on: bool = True;
+
+    has rd_now_cached: str = "";              # set once in `rd_start`; Root entry is the only
+                                               # place `here` is actually Root
+    has rd_soft_taken: int = 0;               # beliefs actually collected into `out.soft`
+    has rd_seen_soft_beliefs: list[str] = []; # cycle/dedupe guard, mirrors `rd_seen_anchors`
+    has rd_soft_trail_beliefs: list[Belief] = [];    # collected beliefs, reinforced at Root exit
+    has rd_soft_trail_relates: list[Relates] = [];   # Relates edges walked, reinforced at exit
 
     # ============ S5: THE EMERGENCY BYPASS. THIS ABILITY MUST STAY FIRST. ================
     #
@@ -484,6 +625,10 @@ walker:pub Recall {
 
     # --- Root entry: deterministic anchor resolution, no model (A3) ----------------------
     can rd_start with Root entry {
+        # Channel A's decay clock (#15) — computed once here, since `here` is only ever Root in
+        # THIS ability. Cached rather than recomputed at every Anchor/Belief visit.
+        self.rd_now_cached = rd_now(here);
+
         # Bound to a typed local before any `len()`: an inline `len([root -->][?:Anchor])` fails
         # JS codegen with E5016 when the walker is reachable from a `cl { }` block (#30).
         # Depth 1 from root, matching how `main.jac` reads `Raised`. If #2 attaches the
@@ -689,6 +834,78 @@ walker:pub Recall {
         }
     }
 
+    # --- Anchor entry, channel A (#15): score About + Shortcut, visit top `beam` ---------
+    # A SEPARATE ability from `rd_anchor` above, not a branch inside it — multiple abilities
+    # declared for the same node type all fire, in declaration order (the two `Root entry`
+    # abilities above already rely on this). Keeping channel A in its own ability is what makes
+    # "channel B byte-identical with channel A enabled and disabled" (#15 acceptance line 5)
+    # actually true: this ability never touches `self.out.violations`, `self.out.concerns`,
+    # `self.rd_hard_hit`, or `self.out.allowed`, and `rd_anchor` above is untouched by its
+    # presence, run order, or absence.
+    can rd_anchor_soft with Anchor entry {
+        if not self.rd_channel_a_on {
+            return;
+        }
+        if self.rd_soft_taken >= self.budget {
+            return;
+        }
+
+        candidates: list[Belief] = [];
+        scores: dict[str, float] = {};
+
+        # `[here <-:About:<-]` returns `Preference`/`Constraint` subclass instances too — the
+        # same gotcha `rd_regimen_beliefs` documents above. Constraints are channel B's exclusive
+        # domain; Preferences are exactly channel A's domain ("soft: preferences, conventions",
+        # #15's own framing), so only Constraint is excluded here.
+        for b in [here <-:About:<-] {
+            if isinstance(b, Constraint) {
+                continue;
+            }
+            bid: str = jid(b);
+            if bid in self.rd_seen_soft_beliefs {
+                continue;
+            }
+            superseders: list[Belief] = [b <-:Supersedes:<-];
+            if len(superseders) > 0 {
+                continue;
+            }
+            eff: float = rd_effective(b.strength, b.last_used, self.rd_now_cached);
+            if eff < RD_WATERLINE {
+                continue;
+            }
+            candidates.append(b);
+            scores[bid] = eff;
+        }
+
+        # Shortcut belongs here, not at the Belief step — see the schema-correction note above
+        # `rd_now`. `edge Shortcut: Anchor --> Belief` makes this the only node type it can be
+        # read from at all.
+        for b in [here ->:Shortcut:->] {
+            if isinstance(b, Constraint) {
+                continue;
+            }
+            bid2: str = jid(b);
+            if bid2 in self.rd_seen_soft_beliefs {
+                continue;
+            }
+            sup2: list[Belief] = [b <-:Supersedes:<-];
+            if len(sup2) > 0 {
+                continue;
+            }
+            eff2: float = rd_effective(b.strength, b.last_used, self.rd_now_cached);
+            if eff2 < RD_WATERLINE {
+                continue;
+            }
+            if bid2 not in scores {
+                candidates.append(b);
+                scores[bid2] = eff2;
+            }
+        }
+
+        top: list[Belief] = rd_top_beam(candidates, scores, self.beam);
+        visit top;
+    }
+
     # --- Constraint entry: Supersedes is the only killer (A2) ----------------------------
     can rd_constraint with Constraint entry {
         cid: str = jid(here);
@@ -731,6 +948,100 @@ walker:pub Recall {
                 at=u.at
             )
         );
+    }
+
+    # --- Belief entry, channel A (#15): superseded -> skip; budget; else collect + expand -
+    # Fires on `Constraint`/`Preference` visits too (ISA dispatch — both are `Belief` subclasses,
+    # same as the `<-:About:<-` gotcha above). The `isinstance` guard is the FIRST statement,
+    # before any `self.` mutation, so a `Constraint` visit — queued by channel B's `rd_anchor`
+    # via `visit governed;`/`visit excluded;`, sharing this walker's one visit queue — is a true
+    # no-op here. That is what keeps channel B's traversal byte-identical regardless of this
+    # ability's presence, per #15 acceptance line 5.
+    can rd_belief_soft with Belief entry {
+        if isinstance(here, Constraint) {
+            return;
+        }
+        if not self.rd_channel_a_on {
+            return;
+        }
+
+        bid: str = jid(here);
+        if bid in self.rd_seen_soft_beliefs {
+            return;
+        }
+        self.rd_seen_soft_beliefs.append(bid);
+
+        superseders: list[Belief] = [here <-:Supersedes:<-];
+        if len(superseders) > 0 {
+            return;
+        }
+
+        # Budget is spent on ARRIVAL. See the header note above `rd_now` for why exhaustion is an
+        # early `return` scoped to this ability, not the walker-global `disengage` #15's text
+        # names — the latter would abort channel B's still-queued visits on any interleaved
+        # topology, which the acceptance line rules out.
+        if self.rd_soft_taken >= self.budget {
+            return;
+        }
+
+        self.rd_soft_taken = self.rd_soft_taken + 1;
+        self.out.soft.append(here.claim);
+        self.rd_soft_trail_beliefs.append(here);
+
+        candidates: list[Belief] = [];
+        scores: dict[str, float] = {};
+        relates_edges: dict[str, Relates] = {};
+
+        for b in [here ->:Relates:->] {
+            if isinstance(b, Constraint) {
+                continue;
+            }
+            cbid: str = jid(b);
+            if cbid in self.rd_seen_soft_beliefs {
+                continue;
+            }
+            sup: list[Belief] = [b <-:Supersedes:<-];
+            if len(sup) > 0 {
+                continue;
+            }
+            rel_edges: list[Relates] = [edge here ->:Relates:-> b];
+            rel_w: float = 1.0;
+            if len(rel_edges) > 0 {
+                rel_w = rel_edges[0].weight;
+                relates_edges[cbid] = rel_edges[0];
+            }
+            eff: float = rd_effective(b.strength, b.last_used, self.rd_now_cached) * rel_w;
+            if eff < RD_WATERLINE {
+                continue;
+            }
+            candidates.append(b);
+            scores[cbid] = eff;
+        }
+
+        top: list[Belief] = rd_top_beam(candidates, scores, self.beam);
+        for t in top {
+            tid: str = jid(t);
+            if tid in relates_edges {
+                self.rd_soft_trail_relates.append(relates_edges[tid]);
+            }
+        }
+        visit top;
+    }
+
+    # --- Root exit: reinforce the channel-A trail only (A9) -------------------------------
+    # Order relative to `rd_finish` below does not matter for correctness — reinforcement is a
+    # side effect on the persisted graph, not part of the reported `Verdict` — but declared first
+    # for reading order (reinforce, then report).
+    can rd_soft_reinforce with Root exit {
+        if not self.rd_channel_a_on {
+            return;
+        }
+        for b in self.rd_soft_trail_beliefs {
+            rd_reinforce_belief(b, self.rd_now_cached);
+        }
+        for e in self.rd_soft_trail_relates {
+            rd_reinforce_relates(e, self.rd_now_cached);
+        }
     }
 
     # --- Root exit: assemble and report exactly once -------------------------------------
