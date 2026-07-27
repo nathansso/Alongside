@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-Build specification for **myCancerPal**. Written to be read by an implementing agent.
+Build specification for **Alongside** (working repo name `myCancerPal`). Written to be read by an implementing agent.
 
 This file is **authoritative**. Where it disagrees with anything in `old_docs/`, this file wins and
 the disagreement should be reported to a human.

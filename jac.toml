@@ -1,5 +1,5 @@
 [project]
-name = "myCancerPal"
+name = "alongside"
 version = "0.1.0"
 description = "A longitudinal treatment companion for cancer patients — a page you carry in."
 entry-point = "main.jac"
@@ -8,8 +8,8 @@ kind = "web-app"
 # Written by the jachammer IDE when it snapshots the project (#27). Keep it — dropping it
 # just means the IDE re-creates it on the next sync and re-opens this same conflict.
 [jacpack]
-name = 'myCancerPal'
-description = 'Jac IDE snapshot for myCancerPal'
+name = 'alongside'
+description = 'Jac IDE snapshot for Alongside'
 
 [dependencies]
 [dependencies.npm]

@@ -1,4 +1,4 @@
-"""main.jac — myCancerPal vertical slice (Track 3, Laksh).
+"""main.jac — Alongside vertical slice (Track 3, Laksh).
 
 The single code file the rubric scores for "single-file full-stack development." At submission
 `graph.jac`, `write.jac`, `read.jac`, and `page.cl.jac` collapse into this file (CONTRACTS §1a).
