@@ -31,7 +31,7 @@
 
 import from graph {
     Anchor, Belief, Constraint, Observation, Preference, Utterance,
-    About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes
+    About, DerivedFrom, Governs, Excludes, Member, Reports, Supersedes, Relates
 }
 
 
@@ -652,6 +652,146 @@ test "a curated pair with only one side in the regimen raises nothing" {
     assert len(v.concerns) == 0, "a pair the patient is not taking both sides of is not a finding";
     # Channel B still returns the constraint — unscored and exhaustive, exactly as A2 requires.
     assert len(v.violations) == 1, "channel B is unaffected by mechanism 1 finding nothing";
+}
+
+
+# ==========================================================================================
+# #15 — Recall channel A: beam, budget, lazy decay, reinforcement. MUST STAY ABOVE THE #9
+# BLOCK, same reason as the mechanism-1 tests above: once an emergency fires, `rd_start` (and
+# every other Root-entry ability below it in declaration order) never runs, so channel A's own
+# Root-entry work (`rd_now_cached`) would never execute either.
+# ==========================================================================================
+
+test "channel A budget limits soft collection to at most budget beliefs" {
+    t = "ca1_";
+    a = Anchor(key=t + "docusate", kind="ingredient");
+    root ++> a;
+    b1 = Belief(claim="regimen: docusate 1");
+    b2 = Belief(claim="regimen: docusate 2");
+    b3 = Belief(claim="regimen: docusate 3");
+    root ++> b1;
+    root ++> b2;
+    root ++> b3;
+    b1 +>:About:+> a;
+    b2 +>:About:+> a;
+    b3 +>:About:+> a;
+
+    r = root spawn Recall(anchors=[t + "docusate"], budget=2, beam=5);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+    assert len(v.soft) <= 2, f"budget=2 must deliver at most 2 beliefs, got {len(v.soft)}";
+}
+
+
+test "a superseded belief is skipped by channel A" {
+    t = "ca2_";
+    a = Anchor(key=t + "docusate", kind="ingredient");
+    root ++> a;
+    old = Belief(claim="regimen: docusate old");
+    new = Belief(claim="regimen: docusate new");
+    root ++> old;
+    root ++> new;
+    old +>:About:+> a;
+    new +>:About:+> a;
+    new +>:Supersedes:+> old;
+
+    r = root spawn Recall(anchors=[t + "docusate"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+    assert "regimen: docusate old" not in v.soft, "a superseded belief must not be collected";
+    assert "regimen: docusate new" in v.soft, "the live belief must be collected";
+}
+
+
+test "channel A beam limits fanout at the Anchor step regardless of budget" {
+    t = "ca5_";
+    a = Anchor(key=t + "docusate", kind="ingredient");
+    root ++> a;
+    # Five candidates, distinct strengths so ranking is deterministic.
+    b1 = Belief(claim=t + "b1", strength=5.0);
+    b2 = Belief(claim=t + "b2", strength=4.0);
+    b3 = Belief(claim=t + "b3", strength=3.0);
+    b4 = Belief(claim=t + "b4", strength=2.0);
+    b5 = Belief(claim=t + "b5", strength=1.0);
+    for b in [b1, b2, b3, b4, b5] {
+        root ++> b;
+        b +>:About:+> a;
+    }
+
+    r = root spawn Recall(anchors=[t + "docusate"], budget=10, beam=2);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v = r.reports[0];
+
+    assert len(v.soft) == 2, f"beam=2 must cap Anchor-step fanout at 2 regardless of budget=10, got {len(v.soft)}";
+    assert (t + "b1") in v.soft and (t + "b2") in v.soft, "the two highest-strength candidates must be chosen";
+}
+
+
+# `Relates` is defined in graph.jac but nothing in write.jac creates one yet (grepped, confirmed
+# empty) -- Consolidate's deferred Shortcut/reinforcement work (#57) is the natural home for that.
+# This is therefore fixture-only coverage of the reinforcement acceptance line, not an end-to-end
+# proof against real seed data -- flagged rather than implied.
+test "an edge traversed twice by channel A has a higher weight than traversed once" {
+    t = "ca3_";
+    a = Anchor(key=t + "docusate", kind="ingredient");
+    root ++> a;
+    b1 = Belief(claim=t + "b1");
+    b2 = Belief(claim=t + "b2");
+    root ++> b1;
+    root ++> b2;
+    b1 +>:About:+> a;
+    b1 +>:Relates(weight=1.0):+> b2;
+    # `(a +>:Edge(...):+> b)[0]` returns the DESTINATION NODE, not the edge -- a real gotcha,
+    # same family as `++>`'s. The `[edge ...]` query is the only way to get the edge reference.
+    rel: Relates = [edge b1 ->:Relates:-> b2][0];
+
+    initial_weight: float = rel.weight;
+
+    root spawn Recall(anchors=[t + "docusate"], budget=5, beam=5);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    after_one: float = rel.weight;
+    assert after_one > initial_weight, "one traversal must reinforce the Relates edge";
+
+    root spawn Recall(anchors=[t + "docusate"], budget=5, beam=5);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    after_two: float = rel.weight;
+    assert after_two > after_one, "a second traversal must reinforce it further";
+}
+
+
+# Acceptance line 5, made into an actual test rather than a code-review claim: `rd_channel_a_on`
+# gates every channel-A ability, so this really does compare channel B running with and without
+# channel A present, not just two runs that happen to agree.
+test "channel B results are byte-identical with channel A enabled and disabled" {
+    t = "ca4_";
+    a = Anchor(key=t + "warfarin", kind="ingredient");
+    root ++> a;
+    u = Utterance(text="No warfarin with this combination.", at="2026-05-02", role="pharmacist");
+    root ++> u;
+    c = Constraint(claim="no warfarin on this regimen", hard=True);
+    root ++> c;
+    c +>:Governs:+> a;
+    c +>:DerivedFrom:+> u;
+
+    b = Belief(claim=t + "regimen: warfarin");
+    root ++> b;
+    b +>:About:+> a;
+
+    r_on = root spawn Recall(anchors=[t + "warfarin"], rd_channel_a_on=True);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v_on = r_on.reports[0];
+
+    r_off = root spawn Recall(anchors=[t + "warfarin"], rd_channel_a_on=False);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
+    v_off = r_off.reports[0];
+
+    assert len(v_on.violations) == len(v_off.violations), "violation count must match";
+    for i in range(len(v_on.violations)) {
+        assert v_on.violations[i].claim == v_off.violations[i].claim;
+        assert v_on.violations[i].because == v_off.violations[i].because;
+        assert v_on.violations[i].source == v_off.violations[i].source;
+        assert v_on.violations[i].at == v_off.violations[i].at;
+    }
+    assert len(v_on.concerns) == len(v_off.concerns), "concern count must match";
+    assert v_on.allowed == v_off.allowed, "allowed must match";
+
+    # And channel A actually did something different when on -- proving the comparison above
+    # isn't vacuously true because channel A never fired either way.
+    assert len(v_on.soft) > 0, "precondition: channel A collected something when on";
+    assert len(v_off.soft) == 0, "precondition: channel A collected nothing when off";
 }
 
 
