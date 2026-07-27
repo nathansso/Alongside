@@ -36,6 +36,110 @@ import from graph {
 
 
 # ==========================================================================================
+# Shared-fixture helpers — jac 0.34.5 gives every `test` a FRESH, ISOLATED root (verified with a
+# two-test probe: a Mark seeded in test 1 is invisible in test 2). The file header's "one shared
+# persisted root" is pre-0.34.5 behaviour. So tests that historically reused an earlier test's seed
+# now build the topology themselves by calling one of these. Each helper is a verbatim copy of its
+# source test's inline seed, parameterised on the root; the source tests keep their inline versions
+# (separate isolated roots — no collision).
+# ==========================================================================================
+
+def rd_fx_t1(r: Root) {
+    gf = Anchor(key="t1_grapefruit", kind="food");
+    inh = Anchor(key="t1_CYP3A4-inhibitor", kind="class");
+    sub = Anchor(key="t1_CYP3A4-substrate", kind="class");
+    r ++> gf;
+    r ++> inh;
+    r ++> sub;
+    gf +>:Member(via="class_member"):+> inh;
+    inh +>:Member(via="toxicity_of"):+> sub;
+    u = Utterance(text="Avoid anything that raises your imatinib levels.", at="2026-03-14", role="pharmacist");
+    r ++> u;
+    c = Constraint(claim="avoid raising CYP3A4 substrate exposure", hard=True);
+    r ++> c;
+    c +>:Excludes(because="FDA label section 7, drug interactions"):+> sub;
+    c +>:DerivedFrom:+> u;
+}
+
+def rd_fx_m1(r: Root) {
+    onda = Anchor(key="m1_ondansetron", kind="ingredient");
+    levo = Anchor(key="m1_levofloxacin", kind="ingredient");
+    qtc = Anchor(key="m1_QT-prolonging", kind="class");
+    qtp = Anchor(key="m1_qt_prolongation", kind="symptom");
+    r ++> onda;
+    r ++> levo;
+    r ++> qtc;
+    r ++> qtp;
+    onda +>:Member(via="class_member"):+> qtc;
+    levo +>:Member(via="class_member"):+> qtc;
+    qtc +>:Member(via="toxicity_of"):+> qtp;
+    u_onda = Utterance(text="Ondansetron 8mg for the nausea.", at="2026-02-10", role="oncologist");
+    u_levo = Utterance(text="Levofloxacin 500mg twice daily for the infection.", at="2026-05-03", role="pharmacist");
+    r ++> u_onda;
+    r ++> u_levo;
+    b_onda = Belief(claim="regimen: ondansetron");
+    b_levo = Belief(claim="regimen: levofloxacin");
+    r ++> b_onda;
+    r ++> b_levo;
+    b_onda +>:About:+> onda;
+    b_onda +>:DerivedFrom:+> u_onda;
+    b_levo +>:About:+> levo;
+    b_levo +>:DerivedFrom:+> u_levo;
+}
+
+def rd_fx_m1i(r: Root) {
+    sjw = Anchor(key="m1i_st_johns_wort", kind="ingredient");
+    ind = Anchor(key="m1i_CYP3A4-inducer", kind="class");
+    ima = Anchor(key="m1i_imatinib", kind="ingredient");
+    sub = Anchor(key="m1i_CYP3A4-substrate", kind="class");
+    r ++> sjw;
+    r ++> ind;
+    r ++> ima;
+    r ++> sub;
+    sjw +>:Member(via="class_member"):+> ind;
+    ima +>:Member(via="class_member"):+> sub;
+    u_lbl = Utterance(text="Avoid St John's Wort and other CYP3A4 inducers while on imatinib.", at="2026-01-05", role="label");
+    r ++> u_lbl;
+    c = Constraint(claim="no CYP3A4 inducers on imatinib", hard=True);
+    r ++> c;
+    c +>:Excludes(because="CYP3A4 induction lowers substrate plasma levels, risking loss of efficacy"):+> ind;
+    c +>:Governs:+> sub;
+    c +>:DerivedFrom:+> u_lbl;
+    u_ima = Utterance(text="Imatinib 400mg daily.", at="2026-01-05", role="oncologist");
+    u_sjw = Utterance(text="My neighbor gave me St John's Wort for the fatigue.", at="2026-06-18", role="patient");
+    r ++> u_ima;
+    r ++> u_sjw;
+    b_ima = Belief(claim="regimen: imatinib");
+    b_sjw = Belief(claim="regimen: st_johns_wort");
+    r ++> b_ima;
+    r ++> b_sjw;
+    b_ima +>:About:+> ima;
+    b_ima +>:DerivedFrom:+> u_ima;
+    b_sjw +>:About:+> sjw;
+    b_sjw +>:DerivedFrom:+> u_sjw;
+}
+
+def rd_fx_e4(r: Root) {
+    pain = Anchor(key="e4_mouth-pain", kind="symptom");
+    r ++> pain;
+    u = Utterance(text="Call if it stays at 6 or worse for two days.", at="2026-02-10", role="oncologist");
+    r ++> u;
+    c = Constraint(
+        claim="mouth pain at 6+ for two days is a reason to call", hard=True, emergency=True,
+        threshold_level=6.0, threshold_days=2, threshold_metric="mouth_pain"
+    );
+    r ++> c;
+    c +>:Governs:+> pain;
+    c +>:DerivedFrom:+> u;
+    for val in [7.0, 8.0, 6.5] {
+        o = Observation(metric="mouth_pain", value=val, at="2026-03-14");
+        r ++> o;
+        o +>:Reports:+> pain;
+    }
+}
+
+
+# ==========================================================================================
 # The acceptance case: a blocking constraint two hops out on a cold edge, 10 spawns out of 10.
 # Topology is the real one from `write.jac`'s VOCAB_MEMBERS —
 #   grapefruit --class_member--> CYP3A4-inhibitor --toxicity_of--> CYP3A4-substrate
@@ -87,6 +191,7 @@ test "channel B returns a constraint two hops out, on every one of ten runs" {
 # S2, restated as a property rather than a spot check: nothing channel B emits may carry an empty
 # source or at, whatever the topology.
 test "every Violation carries a non-empty source and at" {
+    rd_fx_t1(root);   # isolated root (0.34.5): seed the t1_ topology this test used to inherit
     r = root spawn Recall(anchors=["t1_grapefruit"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
     assert len(v.violations) > 0, "fixture precondition: expected at least one violation";
@@ -412,6 +517,7 @@ test "two independently prescribed drugs converging on one symptom raise one add
 # Acceptance check 4. The patient could have asked about either drug; the triangle is one fact.
 test "the same triangle reached from the other arm is the same single concern" {
     t = "m1_";
+    rd_fx_m1(root);   # isolated root (0.34.5): seed the m1_ triangle this test used to inherit
     r = root spawn Recall(anchors=[t + "levofloxacin"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
@@ -429,6 +535,7 @@ test "the same triangle reached from the other arm is the same single concern" {
 # processes the shared symptom once and `rd_seen_pairs` is the second guard.
 test "both arms queried at once still yields one concern" {
     t = "m1_";
+    rd_fx_m1(root);   # isolated root (0.34.5): seed the m1_ triangle this test used to inherit
     r = root spawn Recall(anchors=[t + "ondansetron", t + "levofloxacin"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
     assert len(v.concerns) == 1, f"expected 1 concern from both arms, got {len(v.concerns)}";
@@ -440,6 +547,7 @@ test "both arms queried at once still yields one concern" {
 # a prescription ends, which is the opposite of what stopping a drug should do.
 test "a discontinued drug is not active regimen and forms no pair" {
     t = "m1_";
+    rd_fx_m1(root);   # isolated root (0.34.5): seed the m1_ triangle this test discontinues a drug against
     found = [root -->[?:Anchor, key == t + "QT-prolonging"]];
     assert len(found) == 1, "fixture precondition: the m1_ class anchor is still there";
 
@@ -472,6 +580,7 @@ test "a discontinued drug is not active regimen and forms no pair" {
 # has an opinion about, or one an instruction names, is not a drug they are taking.
 test "a Preference or Constraint About an anchor does not make it active regimen" {
     t = "m1_";
+    rd_fx_m1(root);   # isolated root (0.34.5): seed the m1_ triangle this test adds a Preference/Constraint onto
     found = [root -->[?:Anchor, key == t + "QT-prolonging"]];
     amio = Anchor(key=t + "amiodarone", kind="ingredient");
     root ++> amio;
@@ -606,6 +715,7 @@ test "a new substance entering the regimen raises an interaction against the dru
 # constraint is the Governs edge onto CYP3A4-substrate, and an Excludes-only scan finds nothing.
 test "the same interaction reached from the regimen drug names the same new substance" {
     t = "m1i_";
+    rd_fx_m1i(root);   # isolated root (0.34.5): seed the m1i_ topology this test used to inherit
     r = root spawn Recall(anchors=[t + "imatinib"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
@@ -1032,10 +1142,28 @@ test "channel B does not run on the escalate path" {
     c +>:Governs:+> a;
     c +>:DerivedFrom:+> u;
 
+    # Isolated root (0.34.5): this test used to inherit a firing emergency from an earlier `e6_`
+    # test on the shared root. Seed one here so `rd_emergency` fires and pre-empts channel B — the
+    # exact bypass this test verifies (and the ability-declaration order it pins).
+    fev = Anchor(key=t + "fever", kind="symptom");
+    root ++> fev;
+    ue = Utterance(text="Call right away for any fever over 100.4.", at="2026-03-01", role="oncologist");
+    root ++> ue;
+    ce = Constraint(
+        claim="fever over 100.4 is an emergency", hard=True, emergency=True,
+        threshold_level=100.4, threshold_days=0, threshold_metric="temperature"
+    );
+    root ++> ce;
+    ce +>:Governs:+> fev;
+    ce +>:DerivedFrom:+> ue;
+    oe = Observation(metric="temperature", value=101.2, at="2026-03-14");
+    root ++> oe;
+    oe +>:Reports:+> fev;
+
     r = root spawn Recall(anchors=[t + "warfarin"]);  # jac:ignore[W2001] — annex name resolution; `jac test` proves it binds
     v = r.reports[0];
 
-    assert len(v.concerns) > 0, "precondition: the e6_ emergency is still live and must fire";
+    assert len(v.concerns) > 0, "precondition: the seeded emergency must fire and take the bypass";
     assert len(v.violations) == 0,
         "S5: an escalate must pre-empt channel B entirely — a violation here means `rd_emergency` "
         "no longer runs first";
@@ -1046,6 +1174,7 @@ test "channel B does not run on the escalate path" {
 # The other half of e4_: a second qualifying DATE satisfies D = 2 and the criterion fires.
 test "a second qualifying date satisfies threshold_days and fires" {
     t = "e4_";
+    rd_fx_e4(root);   # isolated root (0.34.5): seed the e4_ base this test adds a second date onto
     found: list[Anchor] = [root -->[?:Anchor, key == t + "mouth-pain"]];
     assert len(found) == 1, "fixture precondition: the e4_ anchor is still there";
 
